@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PhantomProxy",
   "version": "1.0.1",
-  "description": "HTTP traffic inspector and repeater for security researchers. Visualize, filter, and replay HTTP requests like a lightweight Burp Suite repeater.",
+  "description": "HTTP traffic inspector & repeater for security researchers. Visualize, filter, and replay requests — like a lightweight Burp Suite.",
   "author": "PhantomProxy",
 
   "permissions": [
