@@ -1,5 +1,4 @@
-// PhantomProxy — Panel v1.3.0
-// Single clean file — no patches, no appends, no duplicate declarations
+// PhantomProxy — Panel v1.3.0 (Mobile Edition)
 "use strict";
 
 // ─── Constants ────────────────────────────────────────
@@ -27,91 +26,133 @@ var lastRespBody      = "";
 var lastRespType      = "";
 var wrapOn            = true;
 
-// Detect standalone mode from URL param
-var IS_STANDALONE = (new URLSearchParams(window.location.search).get("mode") === "standalone");
+// ─── MODIFIED: Auto-detect standalone mode ────────────
+var IS_STANDALONE = false;
+(function detectMode() {
+    var hasDevtools = typeof chrome !== 'undefined' && 
+                      typeof chrome.devtools !== 'undefined' && 
+                      chrome.devtools !== null;
+    var hasInspectedWindow = hasDevtools && 
+                             typeof chrome.devtools.inspectedWindow !== 'undefined';
+    var hasTabId = hasInspectedWindow && 
+                   typeof chrome.devtools.inspectedWindow.tabId !== 'undefined';
+    
+    var urlParam = new URLSearchParams(window.location.search).get("mode");
+    if (urlParam === "standalone") {
+        IS_STANDALONE = true;
+    } else if (!hasDevtools || !hasInspectedWindow || !hasTabId) {
+        IS_STANDALONE = true;
+    } else {
+        IS_STANDALONE = false;
+    }
+})();
 
-// ─── Connection ───────────────────────────────────────
+// ─── MODIFIED: Connection with fallback ───────────────
 function connectBackground() {
-  if (IS_STANDALONE) {
-    doConnect("phantom-standalone");
-  } else {
-    if (!chrome.devtools) { console.error("No chrome.devtools"); return; }
-    doConnect("phantom-devtools-" + chrome.devtools.inspectedWindow.tabId);
-  }
+    if (IS_STANDALONE) {
+        doConnect("phantom-standalone");
+        return;
+    }
+    
+    if (!chrome.devtools) {
+        IS_STANDALONE = true;
+        doConnect("phantom-standalone");
+        return;
+    }
+    
+    try {
+        var tabId = chrome.devtools.inspectedWindow?.tabId;
+        if (!tabId) {
+            IS_STANDALONE = true;
+            doConnect("phantom-standalone");
+        } else {
+            doConnect("phantom-devtools-" + tabId);
+        }
+    } catch(e) {
+        IS_STANDALONE = true;
+        doConnect("phantom-standalone");
+    }
 }
 
 function doConnect(portName) {
-  try {
-    bgPort = chrome.runtime.connect({ name: portName });
-  } catch(e) {
-    console.error("PhantomProxy connect failed:", e);
-    setTimeout(connectBackground, 2000);
-    return;
-  }
-  bgPort.onMessage.addListener(onBgMessage);
-  bgPort.onDisconnect.addListener(function() {
-    bgPort = null;
-    setStatus("Reconnecting…");
-    setTimeout(connectBackground, 1500);
-  });
-  setStatus("PhantomProxy connected");
+    try {
+        if (typeof chrome === 'undefined' || typeof chrome.runtime === 'undefined') {
+            setTimeout(connectBackground, 3000);
+            return;
+        }
+        
+        if (typeof chrome.runtime.connect !== 'function') {
+            setTimeout(connectBackground, 3000);
+            return;
+        }
+        
+        bgPort = chrome.runtime.connect({ name: portName });
+        bgPort.onMessage.addListener(onBgMessage);
+        bgPort.onDisconnect.addListener(function() {
+            bgPort = null;
+            setStatus("Reconnecting…");
+            setTimeout(connectBackground, 1500);
+        });
+        setStatus("PhantomProxy connected");
+    } catch(e) {
+        setTimeout(connectBackground, 2000);
+    }
 }
 
 function sendBg(msg) {
-  if (bgPort) {
-    try { bgPort.postMessage(msg); }
-    catch(e) { console.error("sendBg failed:", e); }
-  }
+    if (bgPort) {
+        try { bgPort.postMessage(msg); }
+        catch(e) {}
+    }
 }
 
-// ─── Message Handler (ONE definition only) ────────────
+// ─── Message Handler ──────────────────────────────────
 function onBgMessage(msg) {
-  if (!msg || typeof msg.type !== "string") return;
+    if (!msg || typeof msg.type !== "string") return;
 
-  switch(msg.type) {
-    case "INIT_REQUESTS":
-      allRequests = Array.isArray(msg.requests) ? msg.requests : [];
-      renderList();
-      break;
+    switch(msg.type) {
+        case "INIT_REQUESTS":
+            allRequests = Array.isArray(msg.requests) ? msg.requests : [];
+            renderList();
+            break;
 
-    case "NEW_REQUEST":
-      if (!captureActive || !msg.request) break;
-      var existing = -1;
-      for (var i = 0; i < allRequests.length; i++) {
-        if (allRequests[i].requestId === msg.request.requestId) { existing = i; break; }
-      }
-      if (existing >= 0) {
-        allRequests[existing] = msg.request;
-        updateRow(msg.request);
-      } else {
-        allRequests.push(msg.request);
-        appendRow(msg.request);
-      }
-      updateCount();
-      break;
+        case "NEW_REQUEST":
+            if (!captureActive || !msg.request) break;
+            var existing = -1;
+            for (var i = 0; i < allRequests.length; i++) {
+                if (allRequests[i].requestId === msg.request.requestId) { existing = i; break; }
+            }
+            if (existing >= 0) {
+                allRequests[existing] = msg.request;
+                updateRow(msg.request);
+            } else {
+                allRequests.push(msg.request);
+                appendRow(msg.request);
+            }
+            updateCount();
+            break;
 
-    case "REQUESTS_CLEARED":
-      allRequests = [];
-      selectedRequestId = null;
-      renderList();
-      showDetailEmpty();
-      break;
+        case "REQUESTS_CLEARED":
+            allRequests = [];
+            selectedRequestId = null;
+            renderList();
+            showDetailEmpty();
+            break;
 
-    case "REQUEST_DELETED":
-      allRequests = allRequests.filter(function(r) { return r.id !== msg.id; });
-      if (selectedRequestId === msg.id) { selectedRequestId = null; showDetailEmpty(); }
-      renderList();
-      break;
+        case "REQUEST_DELETED":
+            allRequests = allRequests.filter(function(r) { return r.id !== msg.id; });
+            if (selectedRequestId === msg.id) { selectedRequestId = null; showDetailEmpty(); }
+            renderList();
+            break;
 
-    case "REPEATER_RESPONSE":
-      // Route to detail-pretty or repeater depending on id prefix
-      if (typeof msg.id === "string" && msg.id.indexOf("dp_") === 0) {
-        showDetailPrettyResult(msg.result);
-      } else {
-        onRepeaterResponse(msg.id, msg.result);
-      }
-      break;
-  }
+        case "REPEATER_RESPONSE":
+            if (typeof msg.id === "string" && msg.id.indexOf("dp_") === 0) {
+                showDetailPrettyResult(msg.result);
+            } else {
+                onRepeaterResponse(msg.id, msg.result);
+            }
+            break;
+    }
 }
 
 // ─── Tab Navigation ───────────────────────────────────
@@ -175,7 +216,6 @@ document.getElementById("btn-pause").addEventListener("click", function() {
 // ─── Filtering Logic ──────────────────────────────────
 function getFiltered() {
   return allRequests.filter(function(req) {
-    // Tab filter (standalone only)
     if (IS_STANDALONE) {
       var sel = document.getElementById("tab-target-select");
       if (sel && sel.value !== "all") {
@@ -321,13 +361,11 @@ function renderDetail(req) {
   renderKV("res-headers-table", req.responseHeaders || {});
   document.getElementById("raw-content").textContent = buildRaw(req);
 
-  // Reset detail sub-tabs to first tab
   document.querySelectorAll(".dtab").forEach(function(b) { b.classList.remove("active"); });
   document.querySelectorAll(".dtab-pane").forEach(function(p) { p.classList.add("hidden"); });
   document.querySelector(".dtab").classList.add("active");
   document.querySelector(".dtab-pane").classList.remove("hidden");
 
-  // Re-init detail tab clicks
   document.querySelectorAll(".dtab").forEach(function(btn) {
     btn.onclick = function() {
       document.querySelectorAll(".dtab").forEach(function(b) { b.classList.remove("active"); });
@@ -835,7 +873,6 @@ function doReload() {
       setStatus("Tab reloading — capturing from start…");
     });
   } else {
-    // DevTools mode
     chrome.devtools.inspectedWindow.reload({});
     allRequests = [];
     renderList();
