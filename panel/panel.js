@@ -1,4 +1,4 @@
-// PhantomProxy — Panel v1.3.0
+// PhantomProxy — Panel v2.0.1
 // Single clean file — no patches, no appends, no duplicate declarations
 "use strict";
 
@@ -22,6 +22,16 @@ var activeSessionId   = null;
 var sessionCounter    = 0;
 var bgPort            = null;
 
+// Bookmark filter toggle
+var bookmarkFilterOn = false;
+var typeFilters      = {};      // resource type multi-filter: { chipKey: true }
+                               // empty = show ALL
+var scopeFilterOn    = false;   // show in-scope only
+
+// Bookmark state — persisted in chrome.storage.local
+// { [requestId]: { color: "#hex", label: "string" } }
+var bookmarkMap = {};
+
 // Pretty print state
 var lastRespBody      = "";
 var lastRespType      = "";
@@ -31,30 +41,81 @@ var wrapOn            = true;
 var IS_STANDALONE = (new URLSearchParams(window.location.search).get("mode") === "standalone");
 
 // ─── Connection ───────────────────────────────────────
+// MV3 service workers go idle. We wake the SW with a sendMessage
+// BEFORE opening a port — this guarantees the SW is running
+// when chrome.runtime.connect() is called, preventing
+// "Receiving end does not exist" errors.
+
+var _reconnectTimer = null;
+var _connecting     = false;
+
 function connectBackground() {
-  if (IS_STANDALONE) {
-    doConnect("phantom-standalone");
-  } else {
-    if (!chrome.devtools) { console.error("No chrome.devtools"); return; }
-    doConnect("phantom-devtools-" + chrome.devtools.inspectedWindow.tabId);
+  if (_connecting) return;
+  _connecting = true;
+
+  // Step 1: Wake the service worker
+  try {
+    chrome.runtime.sendMessage({ type: "WAKE" }, function(response) {
+      // Ignore errors here — SW may have been freshly started
+      if (chrome.runtime.lastError) {
+        // SW wasn't running — the sendMessage itself starts it.
+        // Wait a tick for it to initialize then connect.
+      }
+      // Step 2: Now the SW is definitely awake — open the port
+      _connecting = false;
+      doConnect();
+    });
+  } catch(e) {
+    // Extension context invalidated (e.g. extension was reloaded)
+    // Stop trying — user needs to reopen DevTools
+    _connecting = false;
+    setStatus("Extension reloaded — please close and reopen DevTools");
+    console.warn("PhantomProxy: extension context invalidated", e);
   }
 }
 
-function doConnect(portName) {
+function doConnect() {
+  var portName;
+  if (IS_STANDALONE) {
+    portName = "phantom-standalone";
+  } else {
+    if (!chrome.devtools) {
+      console.error("PhantomProxy: chrome.devtools not available");
+      return;
+    }
+    portName = "phantom-devtools-" + chrome.devtools.inspectedWindow.tabId;
+  }
+
   try {
     bgPort = chrome.runtime.connect({ name: portName });
   } catch(e) {
-    console.error("PhantomProxy connect failed:", e);
-    setTimeout(connectBackground, 2000);
+    console.error("PhantomProxy: connect failed:", e.message);
+    scheduleReconnect();
     return;
   }
+
   bgPort.onMessage.addListener(onBgMessage);
   bgPort.onDisconnect.addListener(function() {
     bgPort = null;
+    var err = chrome.runtime.lastError;
+    if (err && err.message && err.message.indexOf("invalidated") >= 0) {
+      // Extension was reloaded — stop reconnecting
+      setStatus("Extension reloaded — please reopen DevTools");
+      return;
+    }
     setStatus("Reconnecting…");
-    setTimeout(connectBackground, 1500);
+    scheduleReconnect();
   });
-  setStatus("PhantomProxy connected");
+
+  setStatus("PhantomProxy connected — capturing traffic");
+}
+
+function scheduleReconnect() {
+  if (_reconnectTimer) clearTimeout(_reconnectTimer);
+  _reconnectTimer = setTimeout(function() {
+    _reconnectTimer = null;
+    connectBackground();
+  }, 1500);
 }
 
 function sendBg(msg) {
@@ -149,6 +210,55 @@ document.querySelectorAll(".status-chip").forEach(function(chip) {
   });
 });
 
+// Type filter chips — multi-select
+// Clicking ALL clears all others. Clicking a specific type toggles it.
+// If all deselected, falls back to showing everything.
+document.querySelectorAll(".type-chip").forEach(function(chip) {
+  chip.addEventListener("click", function() {
+    var t = chip.dataset.type;
+    if (t === "ALL") {
+      // Reset — clear all selections
+      typeFilters = {};
+      document.querySelectorAll(".type-chip").forEach(function(c) { c.classList.remove("active"); });
+      chip.classList.add("active");
+    } else {
+      // Toggle this type
+      if (typeFilters[t]) {
+        delete typeFilters[t];
+        chip.classList.remove("active");
+      } else {
+        typeFilters[t] = true;
+        chip.classList.add("active");
+      }
+      // Remove ALL highlight since we have specific selections
+      var allChip = document.querySelector(".type-chip[data-type='ALL']");
+      if (allChip) allChip.classList.remove("active");
+      // If nothing selected, revert to ALL
+      if (Object.keys(typeFilters).length === 0) {
+        if (allChip) allChip.classList.add("active");
+      }
+    }
+    renderList();
+    var active = Object.keys(typeFilters);
+    setStatus(active.length === 0 ? "Showing all types" : "Type filter: " + active.join(", "));
+  });
+});
+
+// Scope filter chip (show in-scope only)
+var _scopeFilterBtn = document.getElementById("btn-filter-scope");
+if (_scopeFilterBtn) {
+  _scopeFilterBtn.addEventListener("click", function() {
+    scopeFilterOn = !scopeFilterOn;
+    _scopeFilterBtn.classList.toggle("active", scopeFilterOn);
+    renderList();
+    if (scopeFilterOn && window.PhantomFeatures && !PhantomFeatures.scopeState.domains.length) {
+      setStatus("⚠ No domains in scope — add domains in the Scope tab first");
+    } else {
+      setStatus(scopeFilterOn ? "Showing in-scope requests only" : "Showing all requests");
+    }
+  });
+}
+
 // ─── Capture Controls ─────────────────────────────────
 document.getElementById("btn-clear").addEventListener("click", function() {
   sendBg({ type: "CLEAR_REQUESTS" });
@@ -183,7 +293,47 @@ function getFiltered() {
         if (isFinite(tid) && req.tabId !== tid) return false;
       }
     }
+
+    // Scope filter — global hide mode (set in Scope tab)
+    if (window.PhantomFeatures && !PhantomFeatures.scopeMatch(req.url)) {
+      if (PhantomFeatures.scopeState.enabled && PhantomFeatures.scopeState.mode === "hide") return false;
+    }
+
+    // Scope filter — history tab "IN SCOPE ONLY" chip
+    if (scopeFilterOn && window.PhantomFeatures) {
+      if (!PhantomFeatures.scopeState.domains.length) {
+        // No domains defined — let everything through
+      } else if (!PhantomFeatures.scopeMatch(req.url)) {
+        return false;
+      }
+    }
+
+    // Method filter
     if (methodFilter !== "ALL" && req.method !== methodFilter) return false;
+
+    // Type filter — multi-select
+    if (Object.keys(typeFilters).length > 0) {
+      var rt2 = (req.type || "other").toLowerCase();
+      // Build a set of raw webRequest types that match selected chips
+      var matched = false;
+      var knownTypes2 = ["xmlhttprequest","script","stylesheet","main_frame","sub_frame","image","font","media","websocket"];
+      if (typeFilters["xhr"]        && rt2 === "xmlhttprequest")                          matched = true;
+      if (typeFilters["fetch"]      && rt2 === "xmlhttprequest")                          matched = true;
+      if (typeFilters["script"]     && rt2 === "script")                                  matched = true;
+      if (typeFilters["stylesheet"] && rt2 === "stylesheet")                              matched = true;
+      if (typeFilters["document"]   && (rt2 === "main_frame" || rt2 === "sub_frame"))     matched = true;
+      if (typeFilters["image"]      && rt2 === "image")                                   matched = true;
+      if (typeFilters["font"]       && rt2 === "font")                                    matched = true;
+      if (typeFilters["media"]      && rt2 === "media")                                   matched = true;
+      if (typeFilters["websocket"]  && rt2 === "websocket")                               matched = true;
+      if (typeFilters["other"]      && knownTypes2.indexOf(rt2) < 0)                      matched = true;
+      if (!matched) return false;
+    }
+
+    // Bookmark filter
+    if (bookmarkFilterOn && !bookmarkMap[req.id]) return false;
+
+    // Status filter
     if (statusFilter !== "ALL") {
       var c = req.statusCode;
       if (statusFilter === "ERR" && req.status !== "error") return false;
@@ -192,7 +342,10 @@ function getFiltered() {
       if (statusFilter === "4xx" && !(c >= 400 && c < 500)) return false;
       if (statusFilter === "5xx" && !(c >= 500 && c < 600)) return false;
     }
+
+    // URL text filter
     if (urlFilter && req.url.toLowerCase().indexOf(urlFilter) < 0) return false;
+
     return true;
   });
 }
@@ -247,11 +400,62 @@ function makeRow(req) {
   u.className = "row-url"; u.title = req.url;
   u.appendChild(el("span","row-url-domain", p.host));
   u.appendChild(txt(p.path));
+
+  // Highlight flags
+  var flagsSpan = document.createElement("span");
+  flagsSpan.className = "row-flags";
+  if (window.PhantomFeatures) {
+    var hits = PhantomFeatures.getHighlights(req);
+    // Show top 2 badges to keep row clean
+    hits.slice(0, 2).forEach(function(rule) {
+      flagsSpan.appendChild(PhantomFeatures.makeHighlightBadge(rule));
+    });
+    if (hits.length > 2) {
+      var more = document.createElement("span");
+      more.className = "highlight-badge";
+      more.textContent = "+" + (hits.length - 2);
+      more.style.cssText = "color:var(--text-dim);border:1px solid var(--border);border-radius:2px;font-family:var(--font-ui);font-size:9px;padding:1px 4px;";
+      flagsSpan.appendChild(more);
+    }
+    // Row-level highlight glow
+    if (hits.length) {
+      var topRule = hits[0];
+      if (topRule.id === "admin" || topRule.id === "sensitive" || topRule.id === "server-error" || topRule.id === "sqli-hint") {
+        row.classList.add("hl-security");
+      } else if (topRule.id === "jwt" || topRule.id === "auth" || topRule.id === "apikey") {
+        row.classList.add("hl-auth");
+      } else {
+        row.classList.add("hl-info");
+      }
+    }
+    // Scope dimming
+    if (!PhantomFeatures.scopeMatch(req.url) && PhantomFeatures.scopeState.enabled) {
+      row.classList.add("out-of-scope");
+    }
+  }
+
   var t = el("span","row-type", req.type || "");
   var d = el("span","row-time", dur);
 
-  row.append(m, s, u, t, d);
+  // Bookmark color strip
+  var bm = bookmarkMap[req.id];
+  if (bm) {
+    row.style.borderLeft = "3px solid " + bm.color;
+    row.style.background = bm.color + "10";
+    if (bm.label) row.title = "Bookmark: " + bm.label;
+  } else {
+    row.style.borderLeft = "3px solid transparent";
+  }
+
+  row.append(m, s, u, flagsSpan, t, d);
   row.addEventListener("click", function() { selectReq(req.id); });
+
+  // Right-click → bookmark context menu
+  row.addEventListener("contextmenu", function(e) {
+    e.preventDefault();
+    showBookmarkMenu(req.id, e.clientX, e.clientY);
+  });
+
   return row;
 }
 
@@ -948,8 +1152,273 @@ function setStatus(msg) {
   if (s) s.textContent = msg;
 }
 
+// ─── Bookmarks ────────────────────────────────────────
+
+var BOOKMARK_COLORS = [
+  { color: "#ff3860", label: "Red"    },
+  { color: "#ffb700", label: "Orange" },
+  { color: "#00ff9d", label: "Green"  },
+  { color: "#00e5ff", label: "Cyan"   },
+  { color: "#4d9fff", label: "Blue"   },
+  { color: "#b44fff", label: "Purple" },
+  { color: "#ff9f43", label: "Yellow" },
+  { color: "#ff6b9d", label: "Pink"   }
+];
+
+var _bmMenu = null; // active context menu DOM node
+var _bmMenuReqId = null;
+
+function showBookmarkMenu(reqId, x, y) {
+  closeBookmarkMenu();
+  _bmMenuReqId = reqId;
+
+  var menu = document.createElement("div");
+  menu.id = "bookmark-menu";
+  menu.style.cssText = [
+    "position:fixed",
+    "z-index:9999",
+    "left:" + Math.min(x, window.innerWidth - 220) + "px",
+    "top:"  + Math.min(y, window.innerHeight - 280) + "px",
+    "background:var(--bg-elevated)",
+    "border:1px solid var(--border)",
+    "border-radius:4px",
+    "box-shadow:0 8px 32px rgba(0,0,0,0.5)",
+    "padding:8px",
+    "min-width:200px",
+    "font-family:var(--font-ui)"
+  ].join(";");
+
+  // Header
+  var hdr = document.createElement("div");
+  hdr.style.cssText = "font-size:10px;font-weight:700;letter-spacing:2px;color:var(--text-dim);padding:4px 6px 8px;border-bottom:1px solid var(--border);margin-bottom:8px;";
+  hdr.textContent = "HIGHLIGHT ROW";
+  menu.appendChild(hdr);
+
+  // Color swatches grid
+  var grid = document.createElement("div");
+  grid.style.cssText = "display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:4px;margin-bottom:8px;";
+
+  var current = bookmarkMap[reqId];
+
+  BOOKMARK_COLORS.forEach(function(bc) {
+    var swatch = document.createElement("button");
+    swatch.title = bc.label;
+    var isActive = current && current.color === bc.color;
+    swatch.style.cssText = [
+      "width:36px", "height:36px",
+      "background:" + bc.color,
+      "border:" + (isActive ? "3px solid white" : "2px solid transparent"),
+      "border-radius:4px",
+      "cursor:pointer",
+      "transition:transform 0.1s,box-shadow 0.1s",
+      "box-shadow:" + (isActive ? "0 0 10px " + bc.color : "none")
+    ].join(";");
+    swatch.addEventListener("mouseenter", function() {
+      swatch.style.transform = "scale(1.12)";
+      swatch.style.boxShadow = "0 0 10px " + bc.color;
+    });
+    swatch.addEventListener("mouseleave", function() {
+      swatch.style.transform = isActive ? "scale(1.0)" : "scale(1.0)";
+      swatch.style.boxShadow = isActive ? "0 0 10px " + bc.color : "none";
+    });
+    swatch.addEventListener("click", function() {
+      setBookmark(reqId, bc.color, current ? current.label : "");
+      closeBookmarkMenu();
+    });
+    grid.appendChild(swatch);
+  });
+  menu.appendChild(grid);
+
+  // Label input
+  var labelRow = document.createElement("div");
+  labelRow.style.cssText = "display:flex;gap:6px;padding:0 4px;margin-bottom:8px;";
+  var labelInput = document.createElement("input");
+  labelInput.type = "text";
+  labelInput.placeholder = "Add a note…";
+  labelInput.value = current ? (current.label || "") : "";
+  labelInput.spellcheck = false;
+  labelInput.style.cssText = [
+    "flex:1", "padding:5px 8px",
+    "background:var(--bg-surface)",
+    "border:1px solid var(--border)",
+    "border-radius:3px",
+    "color:var(--text-primary)",
+    "font-family:var(--font-mono)",
+    "font-size:11px", "outline:none"
+  ].join(";");
+  labelInput.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+      var col = current ? current.color : BOOKMARK_COLORS[0].color;
+      setBookmark(reqId, col, labelInput.value.trim());
+      closeBookmarkMenu();
+    }
+    e.stopPropagation();
+  });
+  labelRow.appendChild(labelInput);
+  menu.appendChild(labelRow);
+
+  // Divider + clear
+  var div = document.createElement("div");
+  div.style.cssText = "height:1px;background:var(--border);margin:4px 0;";
+  menu.appendChild(div);
+
+  var clearBtn = document.createElement("button");
+  clearBtn.textContent = "✕  Remove highlight";
+  clearBtn.style.cssText = [
+    "width:100%", "padding:7px 10px",
+    "background:transparent",
+    "border:none", "border-radius:3px",
+    "color:var(--text-dim)",
+    "font-family:var(--font-ui)",
+    "font-size:11px", "font-weight:600",
+    "letter-spacing:0.5px",
+    "text-align:left", "cursor:pointer",
+    "transition:background 0.1s,color 0.1s"
+  ].join(";");
+  clearBtn.addEventListener("mouseenter", function() {
+    clearBtn.style.background = "rgba(255,56,96,0.1)";
+    clearBtn.style.color = "var(--red)";
+  });
+  clearBtn.addEventListener("mouseleave", function() {
+    clearBtn.style.background = "transparent";
+    clearBtn.style.color = "var(--text-dim)";
+  });
+  clearBtn.addEventListener("click", function() {
+    removeBookmark(reqId);
+    closeBookmarkMenu();
+  });
+  menu.appendChild(clearBtn);
+
+  document.body.appendChild(menu);
+  _bmMenu = menu;
+
+  // Focus label input
+  setTimeout(function() { labelInput.focus(); }, 50);
+
+  // Close on outside click
+  setTimeout(function() {
+    document.addEventListener("click", closeBookmarkMenu, { once: true });
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") closeBookmarkMenu();
+    }, { once: true });
+  }, 0);
+}
+
+function closeBookmarkMenu() {
+  if (_bmMenu) { _bmMenu.remove(); _bmMenu = null; }
+}
+
+function setBookmark(reqId, color, label) {
+  bookmarkMap[reqId] = { color: color, label: label || "" };
+  saveBookmarks();
+  refreshRow(reqId);
+  setStatus("Highlighted request — " + (label || color));
+}
+
+function removeBookmark(reqId) {
+  delete bookmarkMap[reqId];
+  saveBookmarks();
+  refreshRow(reqId);
+  setStatus("Highlight removed");
+}
+
+function refreshRow(reqId) {
+  // Re-render just that row without full list re-render
+  var req = allRequests.find(function(r) { return r.id === reqId; });
+  if (!req) return;
+  var old = document.querySelector('.request-row[data-id="' + CSS.escape(reqId) + '"]');
+  if (old) old.replaceWith(makeRow(req));
+}
+
+function saveBookmarks() {
+  chrome.storage.local.set({ phantomBookmarks: bookmarkMap });
+}
+
+function loadBookmarks() {
+  chrome.storage.local.get("phantomBookmarks", function(data) {
+    if (data.phantomBookmarks) {
+      bookmarkMap = data.phantomBookmarks;
+    }
+  });
+}
+
 // ─── Init ─────────────────────────────────────────────
 if (IS_STANDALONE) initStandalone();
 connectBackground();
 setStatus("PhantomProxy ready");
 createSession(null);
+
+// Load bookmarks from storage on startup
+loadBookmarks();
+
+// Bookmark filter button
+var _bmFilterBtn = document.getElementById("btn-filter-bookmarked");
+if (_bmFilterBtn) {
+  _bmFilterBtn.addEventListener("click", function() {
+    bookmarkFilterOn = !bookmarkFilterOn;
+    _bmFilterBtn.classList.toggle("active", bookmarkFilterOn);
+    renderList();
+    setStatus(bookmarkFilterOn ? "Showing highlighted requests only" : "Showing all requests");
+  });
+}
+
+// ─── Features v2.0.1 ──────────────────────────────────
+if (window.PhantomFeatures) {
+  PhantomFeatures.init(
+    function() { return allRequests; },          // getRequests
+    function(imported) {                          // addRequests
+      imported.forEach(function(r) { allRequests.push(r); });
+    },
+    renderList,
+    setStatus
+  );
+}
+
+// Update scope toggle button text
+var _scopeToggleBtn = document.getElementById("scope-toggle");
+if (_scopeToggleBtn) {
+  var _origScopeClick = _scopeToggleBtn.onclick;
+  _scopeToggleBtn.addEventListener("click", function() {
+    setTimeout(function() {
+      _scopeToggleBtn.textContent = window.PhantomFeatures && PhantomFeatures.scopeState.enabled
+        ? "SCOPE ON" : "SCOPE OFF";
+    }, 10);
+  });
+  _scopeToggleBtn.textContent = "SCOPE OFF";
+}
+
+// cURL import event → create repeater session
+document.addEventListener("phantom:curl-import", function(e) {
+  var parsed = e.detail;
+  if (!parsed || !parsed.url) return;
+  var fakeReq = {
+    method:         parsed.method || "GET",
+    url:            parsed.url,
+    requestHeaders: parsed.headers || {},
+    requestBody:    parsed.body || null
+  };
+  createSession(fakeReq);
+  switchTab("repeater");
+});
+
+// Keyboard shortcuts
+document.addEventListener("keydown", function(e) {
+  // Ctrl+Enter in repeater URL field = send
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    var active = document.activeElement;
+    if (active && (active.id === "rep-url" || active.id === "rep-body" || active.id === "rep-raw")) {
+      e.preventDefault();
+      doSend();
+    }
+  }
+  // Ctrl+L = clear
+  if ((e.ctrlKey || e.metaKey) && e.key === "l") {
+    e.preventDefault();
+    sendBg({ type: "CLEAR_REQUESTS" });
+  }
+  // Ctrl+F = focus filter
+  if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+    var fi = document.getElementById("filter-url");
+    if (fi) { e.preventDefault(); fi.focus(); fi.select(); }
+  }
+});
