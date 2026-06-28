@@ -1,4 +1,5 @@
-// PhantomProxy — Panel v1.3.0 (Mobile Edition)
+// PhantomProxy — Panel v2.0.1 (Android Fixed)
+// Single clean file — no patches, no appends, no duplicate declarations
 "use strict";
 
 // ─── Constants ────────────────────────────────────────
@@ -21,12 +22,22 @@ var activeSessionId   = null;
 var sessionCounter    = 0;
 var bgPort            = null;
 
+// Bookmark filter toggle
+var bookmarkFilterOn = false;
+var typeFilters      = {};      // resource type multi-filter: { chipKey: true }
+                               // empty = show ALL
+var scopeFilterOn    = false;   // show in-scope only
+
+// Bookmark state — persisted in chrome.storage.local
+// { [requestId]: { color: "#hex", label: "string" } }
+var bookmarkMap = {};
+
 // Pretty print state
 var lastRespBody      = "";
 var lastRespType      = "";
 var wrapOn            = true;
 
-// ─── MODIFIED: Auto-detect standalone mode ────────────
+// ─── FIX: Auto-detect standalone mode ──────────────────
 var IS_STANDALONE = false;
 (function detectMode() {
     var hasDevtools = typeof chrome !== 'undefined' && 
@@ -47,112 +58,115 @@ var IS_STANDALONE = false;
     }
 })();
 
-// ─── MODIFIED: Connection with fallback ───────────────
+// ─── FIX: Connection with fallback for Android ────────
+var _reconnectTimer = null;
+var _connecting     = false;
+
 function connectBackground() {
-    if (IS_STANDALONE) {
-        doConnect("phantom-standalone");
-        return;
+  if (IS_STANDALONE) {
+    doConnect("phantom-standalone");
+    return;
+  }
+  
+  if (!chrome.devtools) {
+    IS_STANDALONE = true;
+    doConnect("phantom-standalone");
+    return;
+  }
+  
+  try {
+    var tabId = chrome.devtools.inspectedWindow?.tabId;
+    if (!tabId) {
+      IS_STANDALONE = true;
+      doConnect("phantom-standalone");
+    } else {
+      doConnect("phantom-devtools-" + tabId);
     }
-    
-    if (!chrome.devtools) {
-        IS_STANDALONE = true;
-        doConnect("phantom-standalone");
-        return;
-    }
-    
-    try {
-        var tabId = chrome.devtools.inspectedWindow?.tabId;
-        if (!tabId) {
-            IS_STANDALONE = true;
-            doConnect("phantom-standalone");
-        } else {
-            doConnect("phantom-devtools-" + tabId);
-        }
-    } catch(e) {
-        IS_STANDALONE = true;
-        doConnect("phantom-standalone");
-    }
+  } catch(e) {
+    IS_STANDALONE = true;
+    doConnect("phantom-standalone");
+  }
 }
 
 function doConnect(portName) {
-    try {
-        if (typeof chrome === 'undefined' || typeof chrome.runtime === 'undefined') {
-            setTimeout(connectBackground, 3000);
-            return;
-        }
-        
-        if (typeof chrome.runtime.connect !== 'function') {
-            setTimeout(connectBackground, 3000);
-            return;
-        }
-        
-        bgPort = chrome.runtime.connect({ name: portName });
-        bgPort.onMessage.addListener(onBgMessage);
-        bgPort.onDisconnect.addListener(function() {
-            bgPort = null;
-            setStatus("Reconnecting…");
-            setTimeout(connectBackground, 1500);
-        });
-        setStatus("PhantomProxy connected");
-    } catch(e) {
-        setTimeout(connectBackground, 2000);
+  try {
+    if (typeof chrome === 'undefined' || typeof chrome.runtime === 'undefined') {
+      setTimeout(connectBackground, 3000);
+      return;
     }
+    
+    if (typeof chrome.runtime.connect !== 'function') {
+      setTimeout(connectBackground, 3000);
+      return;
+    }
+    
+    bgPort = chrome.runtime.connect({ name: portName });
+    bgPort.onMessage.addListener(onBgMessage);
+    bgPort.onDisconnect.addListener(function() {
+      bgPort = null;
+      setStatus("Reconnecting…");
+      setTimeout(connectBackground, 1500);
+    });
+    setStatus("PhantomProxy connected");
+  } catch(e) {
+    setTimeout(connectBackground, 2000);
+  }
 }
 
 function sendBg(msg) {
-    if (bgPort) {
-        try { bgPort.postMessage(msg); }
-        catch(e) {}
-    }
+  if (bgPort) {
+    try { bgPort.postMessage(msg); }
+    catch(e) {}
+  }
 }
 
 // ─── Message Handler ──────────────────────────────────
 function onBgMessage(msg) {
-    if (!msg || typeof msg.type !== "string") return;
+  if (!msg || typeof msg.type !== "string") return;
 
-    switch(msg.type) {
-        case "INIT_REQUESTS":
-            allRequests = Array.isArray(msg.requests) ? msg.requests : [];
-            renderList();
-            break;
+  switch(msg.type) {
+    case "INIT_REQUESTS":
+      allRequests = Array.isArray(msg.requests) ? msg.requests : [];
+      renderList();
+      break;
 
-        case "NEW_REQUEST":
-            if (!captureActive || !msg.request) break;
-            var existing = -1;
-            for (var i = 0; i < allRequests.length; i++) {
-                if (allRequests[i].requestId === msg.request.requestId) { existing = i; break; }
-            }
-            if (existing >= 0) {
-                allRequests[existing] = msg.request;
-                updateRow(msg.request);
-            } else {
-                allRequests.push(msg.request);
-                appendRow(msg.request);
-            }
-            updateCount();
-            break;
+    case "NEW_REQUEST":
+      if (!captureActive || !msg.request) break;
+      var existing = -1;
+      for (var i = 0; i < allRequests.length; i++) {
+        if (allRequests[i].requestId === msg.request.requestId) { existing = i; break; }
+      }
+      if (existing >= 0) {
+        allRequests[existing] = msg.request;
+        updateRow(msg.request);
+      } else {
+        allRequests.push(msg.request);
+        appendRow(msg.request);
+      }
+      updateCount();
+      break;
 
-        case "REQUESTS_CLEARED":
-            allRequests = [];
-            selectedRequestId = null;
-            renderList();
-            showDetailEmpty();
-            break;
+    case "REQUESTS_CLEARED":
+      allRequests = [];
+      selectedRequestId = null;
+      renderList();
+      showDetailEmpty();
+      break;
 
-        case "REQUEST_DELETED":
-            allRequests = allRequests.filter(function(r) { return r.id !== msg.id; });
-            if (selectedRequestId === msg.id) { selectedRequestId = null; showDetailEmpty(); }
-            renderList();
-            break;
+    case "REQUEST_DELETED":
+      allRequests = allRequests.filter(function(r) { return r.id !== msg.id; });
+      if (selectedRequestId === msg.id) { selectedRequestId = null; showDetailEmpty(); }
+      renderList();
+      break;
 
-        case "REPEATER_RESPONSE":
-            if (typeof msg.id === "string" && msg.id.indexOf("dp_") === 0) {
-                showDetailPrettyResult(msg.result);
-            } else {
-                onRepeaterResponse(msg.id, msg.result);
-            }
-            break;
-    }
+    case "REPEATER_RESPONSE":
+      if (typeof msg.id === "string" && msg.id.indexOf("dp_") === 0) {
+        showDetailPrettyResult(msg.result);
+      } else {
+        onRepeaterResponse(msg.id, msg.result);
+      }
+      break;
+  }
 }
 
 // ─── Tab Navigation ───────────────────────────────────
@@ -190,6 +204,49 @@ document.querySelectorAll(".status-chip").forEach(function(chip) {
   });
 });
 
+// Type filter chips — multi-select
+document.querySelectorAll(".type-chip").forEach(function(chip) {
+  chip.addEventListener("click", function() {
+    var t = chip.dataset.type;
+    if (t === "ALL") {
+      typeFilters = {};
+      document.querySelectorAll(".type-chip").forEach(function(c) { c.classList.remove("active"); });
+      chip.classList.add("active");
+    } else {
+      if (typeFilters[t]) {
+        delete typeFilters[t];
+        chip.classList.remove("active");
+      } else {
+        typeFilters[t] = true;
+        chip.classList.add("active");
+      }
+      var allChip = document.querySelector(".type-chip[data-type='ALL']");
+      if (allChip) allChip.classList.remove("active");
+      if (Object.keys(typeFilters).length === 0) {
+        if (allChip) allChip.classList.add("active");
+      }
+    }
+    renderList();
+    var active = Object.keys(typeFilters);
+    setStatus(active.length === 0 ? "Showing all types" : "Type filter: " + active.join(", "));
+  });
+});
+
+// Scope filter chip
+var _scopeFilterBtn = document.getElementById("btn-filter-scope");
+if (_scopeFilterBtn) {
+  _scopeFilterBtn.addEventListener("click", function() {
+    scopeFilterOn = !scopeFilterOn;
+    _scopeFilterBtn.classList.toggle("active", scopeFilterOn);
+    renderList();
+    if (scopeFilterOn && window.PhantomFeatures && !PhantomFeatures.scopeState.domains.length) {
+      setStatus("⚠ No domains in scope — add domains in the Scope tab first");
+    } else {
+      setStatus(scopeFilterOn ? "Showing in-scope requests only" : "Showing all requests");
+    }
+  });
+}
+
 // ─── Capture Controls ─────────────────────────────────
 document.getElementById("btn-clear").addEventListener("click", function() {
   sendBg({ type: "CLEAR_REQUESTS" });
@@ -223,7 +280,39 @@ function getFiltered() {
         if (isFinite(tid) && req.tabId !== tid) return false;
       }
     }
+
+    if (window.PhantomFeatures && !PhantomFeatures.scopeMatch(req.url)) {
+      if (PhantomFeatures.scopeState.enabled && PhantomFeatures.scopeState.mode === "hide") return false;
+    }
+
+    if (scopeFilterOn && window.PhantomFeatures) {
+      if (!PhantomFeatures.scopeState.domains.length) {
+      } else if (!PhantomFeatures.scopeMatch(req.url)) {
+        return false;
+      }
+    }
+
     if (methodFilter !== "ALL" && req.method !== methodFilter) return false;
+
+    if (Object.keys(typeFilters).length > 0) {
+      var rt2 = (req.type || "other").toLowerCase();
+      var matched = false;
+      var knownTypes2 = ["xmlhttprequest","script","stylesheet","main_frame","sub_frame","image","font","media","websocket"];
+      if (typeFilters["xhr"]        && rt2 === "xmlhttprequest")                          matched = true;
+      if (typeFilters["fetch"]      && rt2 === "xmlhttprequest")                          matched = true;
+      if (typeFilters["script"]     && rt2 === "script")                                  matched = true;
+      if (typeFilters["stylesheet"] && rt2 === "stylesheet")                              matched = true;
+      if (typeFilters["document"]   && (rt2 === "main_frame" || rt2 === "sub_frame"))     matched = true;
+      if (typeFilters["image"]      && rt2 === "image")                                   matched = true;
+      if (typeFilters["font"]       && rt2 === "font")                                    matched = true;
+      if (typeFilters["media"]      && rt2 === "media")                                   matched = true;
+      if (typeFilters["websocket"]  && rt2 === "websocket")                               matched = true;
+      if (typeFilters["other"]      && knownTypes2.indexOf(rt2) < 0)                      matched = true;
+      if (!matched) return false;
+    }
+
+    if (bookmarkFilterOn && !bookmarkMap[req.id]) return false;
+
     if (statusFilter !== "ALL") {
       var c = req.statusCode;
       if (statusFilter === "ERR" && req.status !== "error") return false;
@@ -232,7 +321,9 @@ function getFiltered() {
       if (statusFilter === "4xx" && !(c >= 400 && c < 500)) return false;
       if (statusFilter === "5xx" && !(c >= 500 && c < 600)) return false;
     }
+
     if (urlFilter && req.url.toLowerCase().indexOf(urlFilter) < 0) return false;
+
     return true;
   });
 }
@@ -287,11 +378,56 @@ function makeRow(req) {
   u.className = "row-url"; u.title = req.url;
   u.appendChild(el("span","row-url-domain", p.host));
   u.appendChild(txt(p.path));
+
+  var flagsSpan = document.createElement("span");
+  flagsSpan.className = "row-flags";
+  if (window.PhantomFeatures) {
+    var hits = PhantomFeatures.getHighlights(req);
+    hits.slice(0, 2).forEach(function(rule) {
+      flagsSpan.appendChild(PhantomFeatures.makeHighlightBadge(rule));
+    });
+    if (hits.length > 2) {
+      var more = document.createElement("span");
+      more.className = "highlight-badge";
+      more.textContent = "+" + (hits.length - 2);
+      more.style.cssText = "color:var(--text-dim);border:1px solid var(--border);border-radius:2px;font-family:var(--font-ui);font-size:9px;padding:1px 4px;";
+      flagsSpan.appendChild(more);
+    }
+    if (hits.length) {
+      var topRule = hits[0];
+      if (topRule.id === "admin" || topRule.id === "sensitive" || topRule.id === "server-error" || topRule.id === "sqli-hint") {
+        row.classList.add("hl-security");
+      } else if (topRule.id === "jwt" || topRule.id === "auth" || topRule.id === "apikey") {
+        row.classList.add("hl-auth");
+      } else {
+        row.classList.add("hl-info");
+      }
+    }
+    if (!PhantomFeatures.scopeMatch(req.url) && PhantomFeatures.scopeState.enabled) {
+      row.classList.add("out-of-scope");
+    }
+  }
+
   var t = el("span","row-type", req.type || "");
   var d = el("span","row-time", dur);
 
-  row.append(m, s, u, t, d);
+  var bm = bookmarkMap[req.id];
+  if (bm) {
+    row.style.borderLeft = "3px solid " + bm.color;
+    row.style.background = bm.color + "10";
+    if (bm.label) row.title = "Bookmark: " + bm.label;
+  } else {
+    row.style.borderLeft = "3px solid transparent";
+  }
+
+  row.append(m, s, u, flagsSpan, t, d);
   row.addEventListener("click", function() { selectReq(req.id); });
+
+  row.addEventListener("contextmenu", function(e) {
+    e.preventDefault();
+    showBookmarkMenu(req.id, e.clientX, e.clientY);
+  });
+
   return row;
 }
 
@@ -593,7 +729,7 @@ function collectHdrs() {
   return h;
 }
 
-// ─── FIX A: Send Request (REMOVED DROPDOWN OVERRIDE) ──
+// ─── FIX: Send Request (Removed dropdown override + Origin/Referer) ──
 document.getElementById("btn-send-req").addEventListener("click", doSend);
 
 function doSend() {
@@ -606,9 +742,6 @@ function doSend() {
 
   var h = Object.assign({}, s.headers);
   
-  // ─── FIX A: REMOVED DROPDOWN OVERRIDE ──────────────────
-  // The dropdown no longer overwrites Content-Type
-  // Boundary is now preserved from the original request
 
   sendBg({ type:"SEND_REPEATER", request:{ id:activeSessionId, method:s.method, url:s.url, requestHeaders:h, requestBody:s.body||null }});
   btn.disabled=false; btn.textContent="▶ SEND";
@@ -985,8 +1118,257 @@ function setStatus(msg) {
   if (s) s.textContent = msg;
 }
 
+// ─── Bookmarks ────────────────────────────────────────
+
+var BOOKMARK_COLORS = [
+  { color: "#ff3860", label: "Red"    },
+  { color: "#ffb700", label: "Orange" },
+  { color: "#00ff9d", label: "Green"  },
+  { color: "#00e5ff", label: "Cyan"   },
+  { color: "#4d9fff", label: "Blue"   },
+  { color: "#b44fff", label: "Purple" },
+  { color: "#ff9f43", label: "Yellow" },
+  { color: "#ff6b9d", label: "Pink"   }
+];
+
+var _bmMenu = null;
+var _bmMenuReqId = null;
+
+function showBookmarkMenu(reqId, x, y) {
+  closeBookmarkMenu();
+  _bmMenuReqId = reqId;
+
+  var menu = document.createElement("div");
+  menu.id = "bookmark-menu";
+  menu.style.cssText = [
+    "position:fixed",
+    "z-index:9999",
+    "left:" + Math.min(x, window.innerWidth - 220) + "px",
+    "top:"  + Math.min(y, window.innerHeight - 280) + "px",
+    "background:var(--bg-elevated)",
+    "border:1px solid var(--border)",
+    "border-radius:4px",
+    "box-shadow:0 8px 32px rgba(0,0,0,0.5)",
+    "padding:8px",
+    "min-width:200px",
+    "font-family:var(--font-ui)"
+  ].join(";");
+
+  var hdr = document.createElement("div");
+  hdr.style.cssText = "font-size:10px;font-weight:700;letter-spacing:2px;color:var(--text-dim);padding:4px 6px 8px;border-bottom:1px solid var(--border);margin-bottom:8px;";
+  hdr.textContent = "HIGHLIGHT ROW";
+  menu.appendChild(hdr);
+
+  var grid = document.createElement("div");
+  grid.style.cssText = "display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:4px;margin-bottom:8px;";
+
+  var current = bookmarkMap[reqId];
+
+  BOOKMARK_COLORS.forEach(function(bc) {
+    var swatch = document.createElement("button");
+    swatch.title = bc.label;
+    var isActive = current && current.color === bc.color;
+    swatch.style.cssText = [
+      "width:36px", "height:36px",
+      "background:" + bc.color,
+      "border:" + (isActive ? "3px solid white" : "2px solid transparent"),
+      "border-radius:4px",
+      "cursor:pointer",
+      "transition:transform 0.1s,box-shadow 0.1s",
+      "box-shadow:" + (isActive ? "0 0 10px " + bc.color : "none")
+    ].join(";");
+    swatch.addEventListener("mouseenter", function() {
+      swatch.style.transform = "scale(1.12)";
+      swatch.style.boxShadow = "0 0 10px " + bc.color;
+    });
+    swatch.addEventListener("mouseleave", function() {
+      swatch.style.transform = isActive ? "scale(1.0)" : "scale(1.0)";
+      swatch.style.boxShadow = isActive ? "0 0 10px " + bc.color : "none";
+    });
+    swatch.addEventListener("click", function() {
+      setBookmark(reqId, bc.color, current ? current.label : "");
+      closeBookmarkMenu();
+    });
+    grid.appendChild(swatch);
+  });
+  menu.appendChild(grid);
+
+  var labelRow = document.createElement("div");
+  labelRow.style.cssText = "display:flex;gap:6px;padding:0 4px;margin-bottom:8px;";
+  var labelInput = document.createElement("input");
+  labelInput.type = "text";
+  labelInput.placeholder = "Add a note…";
+  labelInput.value = current ? (current.label || "") : "";
+  labelInput.spellcheck = false;
+  labelInput.style.cssText = [
+    "flex:1", "padding:5px 8px",
+    "background:var(--bg-surface)",
+    "border:1px solid var(--border)",
+    "border-radius:3px",
+    "color:var(--text-primary)",
+    "font-family:var(--font-mono)",
+    "font-size:11px", "outline:none"
+  ].join(";");
+  labelInput.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+      var col = current ? current.color : BOOKMARK_COLORS[0].color;
+      setBookmark(reqId, col, labelInput.value.trim());
+      closeBookmarkMenu();
+    }
+    e.stopPropagation();
+  });
+  labelRow.appendChild(labelInput);
+  menu.appendChild(labelRow);
+
+  var div = document.createElement("div");
+  div.style.cssText = "height:1px;background:var(--border);margin:4px 0;";
+  menu.appendChild(div);
+
+  var clearBtn = document.createElement("button");
+  clearBtn.textContent = "✕  Remove highlight";
+  clearBtn.style.cssText = [
+    "width:100%", "padding:7px 10px",
+    "background:transparent",
+    "border:none", "border-radius:3px",
+    "color:var(--text-dim)",
+    "font-family:var(--font-ui)",
+    "font-size:11px", "font-weight:600",
+    "letter-spacing:0.5px",
+    "text-align:left", "cursor:pointer",
+    "transition:background 0.1s,color 0.1s"
+  ].join(";");
+  clearBtn.addEventListener("mouseenter", function() {
+    clearBtn.style.background = "rgba(255,56,96,0.1)";
+    clearBtn.style.color = "var(--red)";
+  });
+  clearBtn.addEventListener("mouseleave", function() {
+    clearBtn.style.background = "transparent";
+    clearBtn.style.color = "var(--text-dim)";
+  });
+  clearBtn.addEventListener("click", function() {
+    removeBookmark(reqId);
+    closeBookmarkMenu();
+  });
+  menu.appendChild(clearBtn);
+
+  document.body.appendChild(menu);
+  _bmMenu = menu;
+
+  setTimeout(function() { labelInput.focus(); }, 50);
+
+  setTimeout(function() {
+    document.addEventListener("click", closeBookmarkMenu, { once: true });
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") closeBookmarkMenu();
+    }, { once: true });
+  }, 0);
+}
+
+function closeBookmarkMenu() {
+  if (_bmMenu) { _bmMenu.remove(); _bmMenu = null; }
+}
+
+function setBookmark(reqId, color, label) {
+  bookmarkMap[reqId] = { color: color, label: label || "" };
+  saveBookmarks();
+  refreshRow(reqId);
+  setStatus("Highlighted request — " + (label || color));
+}
+
+function removeBookmark(reqId) {
+  delete bookmarkMap[reqId];
+  saveBookmarks();
+  refreshRow(reqId);
+  setStatus("Highlight removed");
+}
+
+function refreshRow(reqId) {
+  var req = allRequests.find(function(r) { return r.id === reqId; });
+  if (!req) return;
+  var old = document.querySelector('.request-row[data-id="' + CSS.escape(reqId) + '"]');
+  if (old) old.replaceWith(makeRow(req));
+}
+
+function saveBookmarks() {
+  chrome.storage.local.set({ phantomBookmarks: bookmarkMap });
+}
+
+function loadBookmarks() {
+  chrome.storage.local.get("phantomBookmarks", function(data) {
+    if (data.phantomBookmarks) {
+      bookmarkMap = data.phantomBookmarks;
+    }
+  });
+}
+
 // ─── Init ─────────────────────────────────────────────
 if (IS_STANDALONE) initStandalone();
 connectBackground();
 setStatus("PhantomProxy ready");
 createSession(null);
+
+loadBookmarks();
+
+var _bmFilterBtn = document.getElementById("btn-filter-bookmarked");
+if (_bmFilterBtn) {
+  _bmFilterBtn.addEventListener("click", function() {
+    bookmarkFilterOn = !bookmarkFilterOn;
+    _bmFilterBtn.classList.toggle("active", bookmarkFilterOn);
+    renderList();
+    setStatus(bookmarkFilterOn ? "Showing highlighted requests only" : "Showing all requests");
+  });
+}
+
+if (window.PhantomFeatures) {
+  PhantomFeatures.init(
+    function() { return allRequests; },
+    function(imported) {
+      imported.forEach(function(r) { allRequests.push(r); });
+    },
+    renderList,
+    setStatus
+  );
+}
+
+var _scopeToggleBtn = document.getElementById("scope-toggle");
+if (_scopeToggleBtn) {
+  var _origScopeClick = _scopeToggleBtn.onclick;
+  _scopeToggleBtn.addEventListener("click", function() {
+    setTimeout(function() {
+      _scopeToggleBtn.textContent = window.PhantomFeatures && PhantomFeatures.scopeState.enabled
+        ? "SCOPE ON" : "SCOPE OFF";
+    }, 10);
+  });
+  _scopeToggleBtn.textContent = "SCOPE OFF";
+}
+
+document.addEventListener("phantom:curl-import", function(e) {
+  var parsed = e.detail;
+  if (!parsed || !parsed.url) return;
+  var fakeReq = {
+    method:         parsed.method || "GET",
+    url:            parsed.url,
+    requestHeaders: parsed.headers || {},
+    requestBody:    parsed.body || null
+  };
+  createSession(fakeReq);
+  switchTab("repeater");
+});
+
+document.addEventListener("keydown", function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    var active = document.activeElement;
+    if (active && (active.id === "rep-url" || active.id === "rep-body" || active.id === "rep-raw")) {
+      e.preventDefault();
+      doSend();
+    }
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === "l") {
+    e.preventDefault();
+    sendBg({ type: "CLEAR_REQUESTS" });
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+    var fi = document.getElementById("filter-url");
+    if (fi) { e.preventDefault(); fi.focus(); fi.select(); }
+  }
+});

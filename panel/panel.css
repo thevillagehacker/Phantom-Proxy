@@ -1214,3 +1214,502 @@ body.standalone #topbar > * {
   white-space: pre;
   overflow-x: auto;
 }
+
+/* ═══════════════════════════════════════════════════
+   V2.0.1 — NEW FEATURES CSS
+   ═══════════════════════════════════════════════════ */
+
+/* ─── Flags column ───────────────────────────────── */
+.col-flags { width: 110px; min-width: 90px; overflow: hidden; }
+
+.row-flags {
+  width: 110px; min-width: 90px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+  overflow: hidden;
+}
+
+.highlight-badge {
+  flex-shrink: 0;
+  max-width: 70px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Out-of-scope dimming ───────────────────────── */
+.request-row.out-of-scope {
+  opacity: 0.28;
+  filter: grayscale(0.6);
+}
+.request-row.out-of-scope:hover { opacity: 0.45; }
+
+/* ─── Scope Badge in topbar ──────────────────────── */
+.scope-badge {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  transition: all var(--transition);
+}
+
+.scope-badge.scope-active {
+  color: var(--green);
+  border-color: rgba(0,255,157,0.3);
+  background: rgba(0,255,157,0.06);
+}
+
+/* ─── SCOPE TAB ──────────────────────────────────── */
+#scope-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  padding: 20px 24px;
+  gap: 20px;
+  background: var(--bg-void);
+  overflow-y: auto;
+}
+
+.scope-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.scope-header-left { flex: 1; }
+.scope-header-right { flex-shrink: 0; }
+
+.scope-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.scope-description {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  line-height: 1.6;
+  max-width: 500px;
+}
+
+.scope-toggle-btn {
+  padding: 4px 14px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.scope-toggle-btn.active {
+  background: rgba(0,255,157,0.08);
+  border-color: var(--green);
+  color: var(--green);
+  box-shadow: 0 0 12px rgba(0,255,157,0.15);
+}
+
+.scope-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+#scope-input {
+  flex: 1;
+  padding: 5px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+#scope-input:focus { border-color: var(--cyan-dim); }
+#scope-input::placeholder { color: var(--text-dim); }
+
+.scope-domain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  min-height: 80px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.scope-empty {
+  padding: 16px;
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+.scope-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition);
+}
+
+.scope-row:hover { border-color: var(--cyan-dim); }
+
+.scope-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  flex-shrink: 0;
+}
+
+.scope-domain-label {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.scope-del-btn {
+  padding: 1px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.scope-del-btn:hover { border-color: var(--red-dim); color: var(--red); }
+
+.scope-legend {
+  padding: 14px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.legend-title {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.legend-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.legend-dot.in   { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.legend-dot.out  { background: var(--text-dim); }
+.legend-dot.wild { background: var(--cyan); box-shadow: 0 0 4px var(--cyan); }
+
+/* ─── cURL Import Panel ──────────────────────────── */
+#curl-import-panel {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-deep);
+  display: flex;
+  flex-direction: column;
+}
+
+#curl-import-panel.hidden { display: none; }
+
+.curl-import-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.curl-hint {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+#curl-import-textarea {
+  height: 90px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.7;
+  resize: none;
+  outline: none;
+}
+
+.curl-import-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* ─── Highlight row glow effects ─────────────────── */
+.request-row.hl-security {
+  border-left: 2px solid #ff3860;
+}
+.request-row.hl-auth {
+  border-left: 2px solid #b44fff;
+}
+.request-row.hl-info {
+  border-left: 2px solid #ffb700;
+}
+
+/* ─── Scope toggle btn text update ──────────────── */
+#scope-toggle.active { }
+
+/* ═══════════════════════════════════════════════════
+   BOOKMARK / HIGHLIGHT SYSTEM
+   ═══════════════════════════════════════════════════ */
+
+/* ─── Context menu is injected dynamically ────────
+   Styles live inline in JS for portability.
+   Additional row-level styles below. */
+
+/* ─── Bookmark left stripe ───────────────────────── */
+.request-row {
+  border-left: 3px solid transparent;
+  transition: border-left-color var(--transition), background var(--transition), opacity var(--transition);
+}
+
+/* ─── Bookmark filter button ─────────────────────── */
+.bookmark-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.bookmark-filter-btn:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.bookmark-filter-btn.active {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: rgba(255,183,0,0.08);
+}
+
+.bm-filter-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 5px var(--amber);
+  flex-shrink: 0;
+  transition: background var(--transition);
+}
+
+/* ─── Right-click hint on hover ──────────────────── */
+.request-row::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background 0.2s;
+}
+
+.request-row:hover::after {
+  background: var(--text-dim);
+  box-shadow: 0 -5px 0 var(--text-dim), 0 5px 0 var(--text-dim);
+}
+
+/* ─── Bookmark menu animation ────────────────────── */
+#bookmark-menu {
+  animation: bm-appear 0.12s ease-out;
+}
+
+@keyframes bm-appear {
+  from { opacity: 0; transform: scale(0.95) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ═══════════════════════════════════════════════════
+   FILTER BAR v2 — TWO-ROW LAYOUT
+   ═══════════════════════════════════════════════════ */
+
+#filter-bar {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  gap: 0;
+}
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.filter-row-2 {
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ─── Type Filter Chips ──────────────────────────── */
+#type-filters {
+  display: flex;
+  gap: 2px;
+  flex-wrap: nowrap;
+}
+
+.type-chip {
+  padding: 2px 7px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.type-chip:hover {
+  border-color: var(--cyan-dim);
+  color: var(--cyan);
+}
+
+.type-chip.active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: var(--cyan-subtle);
+}
+
+/* ─── Scope Filter Button ────────────────────────── */
+.scope-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.scope-filter-btn:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.scope-filter-btn.active {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(0,255,157,0.08);
+  box-shadow: 0 0 8px rgba(0,255,157,0.12);
+}
+
+.scope-filter-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 5px var(--green);
+  flex-shrink: 0;
+}
+
+/* ─── Type chip multi-select active state ────────── */
+.type-chip.active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: var(--cyan-subtle);
+  box-shadow: inset 0 0 0 1px var(--cyan-dim);
+}
+
+/* ALL chip when active looks slightly different — dimmer */
+.type-chip[data-type="ALL"].active {
+  border-color: var(--text-dim);
+  color: var(--text-secondary);
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Multiple selected hint — tiny checkmark on each active chip */
+.type-chip.active::before {
+  content: "✓ ";
+  font-size: 8px;
+  opacity: 0.7;
+}
+
+.type-chip[data-type="ALL"].active::before {
+  content: "";
+}

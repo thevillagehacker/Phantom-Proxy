@@ -17,6 +17,9 @@
       </div>
 
       <nav id="tabs">
+        <button class="tab-btn" data-tab="scope">
+          <span class="tab-icon">◎</span> SCOPE
+        </button>
         <button class="tab-btn active" data-tab="history">
           <span class="tab-icon">◈</span> HISTORY
         </button>
@@ -33,6 +36,10 @@
           <span class="pulse-dot" id="pulse-dot"></span>
           <span id="capture-label">CAPTURING</span>
         </div>
+        <span id="scope-badge" class="scope-badge">SCOPE: OFF</span>
+        <button class="ctrl-btn" id="btn-export-har" title="Export as HAR">⬇ EXPORT</button>
+        <button class="ctrl-btn" id="btn-import-har" title="Import HAR file">⬆ IMPORT</button>
+        <input type="file" id="import-har-input" accept=".har,.json" style="display:none" />
         <button class="ctrl-btn" id="btn-clear" title="Clear all requests">⌫ CLEAR</button>
         <button class="ctrl-btn" id="btn-pause" title="Pause capture">⏸ PAUSE</button>
       </div>
@@ -51,37 +58,71 @@
     <!-- ═══ HISTORY TAB ═══ -->
     <div id="tab-history" class="tab-pane active">
 
-      <!-- Filter Bar -->
+      <!-- Filter Bar — Row 1: URL + METHOD + STATUS -->
       <div id="filter-bar">
-        <div class="filter-group">
-          <span class="filter-label">FILTER</span>
-          <input type="text" id="filter-url" placeholder="domain or path…" spellcheck="false" />
-        </div>
-        <div class="filter-group">
-          <span class="filter-label">METHOD</span>
-          <div id="method-filters">
-            <button class="method-chip active" data-method="ALL">ALL</button>
-            <button class="method-chip" data-method="GET">GET</button>
-            <button class="method-chip" data-method="POST">POST</button>
-            <button class="method-chip" data-method="PUT">PUT</button>
-            <button class="method-chip" data-method="DELETE">DEL</button>
-            <button class="method-chip" data-method="PATCH">PATCH</button>
-            <button class="method-chip" data-method="OPTIONS">OPT</button>
+        <div class="filter-row">
+          <div class="filter-group">
+            <span class="filter-label">FILTER</span>
+            <input type="text" id="filter-url" placeholder="domain, path, or keyword…" spellcheck="false" />
+          </div>
+          <div class="filter-group">
+            <span class="filter-label">METHOD</span>
+            <div id="method-filters">
+              <button class="method-chip active" data-method="ALL">ALL</button>
+              <button class="method-chip" data-method="GET">GET</button>
+              <button class="method-chip" data-method="POST">POST</button>
+              <button class="method-chip" data-method="PUT">PUT</button>
+              <button class="method-chip" data-method="DELETE">DEL</button>
+              <button class="method-chip" data-method="PATCH">PATCH</button>
+              <button class="method-chip" data-method="OPTIONS">OPT</button>
+            </div>
+          </div>
+          <div class="filter-group">
+            <span class="filter-label">STATUS</span>
+            <div id="status-filters">
+              <button class="status-chip active" data-status="ALL">ALL</button>
+              <button class="status-chip" data-status="2xx">2xx</button>
+              <button class="status-chip" data-status="3xx">3xx</button>
+              <button class="status-chip" data-status="4xx">4xx</button>
+              <button class="status-chip" data-status="5xx">5xx</button>
+              <button class="status-chip" data-status="ERR">ERR</button>
+            </div>
+          </div>
+          <div class="filter-group ml-auto">
+            <span id="request-count">0 requests</span>
           </div>
         </div>
-        <div class="filter-group">
-          <span class="filter-label">STATUS</span>
-          <div id="status-filters">
-            <button class="status-chip active" data-status="ALL">ALL</button>
-            <button class="status-chip" data-status="2xx">2xx</button>
-            <button class="status-chip" data-status="3xx">3xx</button>
-            <button class="status-chip" data-status="4xx">4xx</button>
-            <button class="status-chip" data-status="5xx">5xx</button>
-            <button class="status-chip" data-status="ERR">ERR</button>
+
+        <!-- Filter Bar — Row 2: TYPE + SCOPE + HIGHLIGHT -->
+        <div class="filter-row filter-row-2">
+          <div class="filter-group">
+            <span class="filter-label">TYPE</span>
+            <div id="type-filters">
+              <button class="type-chip active" data-type="ALL">ALL</button>
+              <button class="type-chip" data-type="xhr">XHR</button>
+              <button class="type-chip" data-type="fetch">FETCH</button>
+              <button class="type-chip" data-type="script">JS</button>
+              <button class="type-chip" data-type="stylesheet">CSS</button>
+              <button class="type-chip" data-type="document">HTML</button>
+              <button class="type-chip" data-type="image">IMG</button>
+              <button class="type-chip" data-type="font">FONT</button>
+              <button class="type-chip" data-type="media">MEDIA</button>
+              <button class="type-chip" data-type="websocket">WS</button>
+              <button class="type-chip" data-type="other">OTHER</button>
+            </div>
           </div>
-        </div>
-        <div class="filter-group ml-auto">
-          <span id="request-count">0 requests</span>
+          <div class="filter-group">
+            <span class="filter-label">SCOPE</span>
+            <button class="scope-filter-btn" id="btn-filter-scope" title="Show only in-scope requests">
+              <span class="scope-filter-dot"></span> IN SCOPE ONLY
+            </button>
+          </div>
+          <div class="filter-group">
+            <span class="filter-label">HIGHLIGHT</span>
+            <button class="bookmark-filter-btn" id="btn-filter-bookmarked" title="Show only highlighted requests">
+              <span class="bm-filter-dot"></span> HIGHLIGHTED ONLY
+            </button>
+          </div>
         </div>
       </div>
 
@@ -94,6 +135,7 @@
             <span class="col-method">METHOD</span>
             <span class="col-status">STATUS</span>
             <span class="col-url">URL</span>
+            <span class="col-flags">FLAGS</span>
             <span class="col-type">TYPE</span>
             <span class="col-time">TIME</span>
           </div>
@@ -178,6 +220,19 @@
             <!-- dynamic -->
           </div>
           <button id="btn-new-repeater" class="ctrl-btn">+ NEW</button>
+          <button id="btn-import-curl" class="ctrl-btn" title="Import cURL command">⬆ IMPORT CURL</button>
+        </div>
+        <!-- cURL Import Panel -->
+        <div id="curl-import-panel" class="hidden">
+          <div class="curl-import-header">
+            <span class="pane-title">PASTE CURL COMMAND</span>
+            <span class="curl-hint">Ctrl+Enter to import</span>
+          </div>
+          <textarea id="curl-import-textarea" placeholder="curl -X POST 'https://api.example.com/endpoint' \&#10;  -H 'Authorization: Bearer token' \&#10;  -H 'Content-Type: application/json' \&#10;  -d '{&quot;key&quot;: &quot;value&quot;}'"></textarea>
+          <div class="curl-import-footer">
+            <button id="btn-curl-import-do" class="send-btn">⬆ IMPORT INTO REPEATER</button>
+          </div>
+        <!-- keep open tag balance -->
         </div>
 
         <!-- Repeater Editor -->
@@ -322,14 +377,53 @@
       </div>
     </div>
 
+    <!-- ═══ SCOPE TAB ═══ -->
+    <div id="tab-scope" class="tab-pane hidden">
+      <div id="scope-container">
+
+        <div class="scope-header">
+          <div class="scope-header-left">
+            <div class="scope-title-row">
+              <span class="pane-title">TARGET SCOPE</span>
+              <button id="scope-toggle" class="scope-toggle-btn">SCOPE OFF</button>
+              <button id="scope-mode-toggle" class="ctrl-btn small">MODE: DIM</button>
+            </div>
+            <p class="scope-description">Define which domains to focus on. Out-of-scope requests are dimmed or hidden depending on mode.</p>
+          </div>
+          <div class="scope-header-right">
+            <button id="btn-scope-add-current" class="ctrl-btn">⬡ ADD ALL FROM HISTORY</button>
+          </div>
+        </div>
+
+        <div class="scope-input-row">
+          <span class="filter-label">ADD DOMAIN</span>
+          <input type="text" id="scope-input" placeholder="example.com or *.example.com or paste full URL" spellcheck="false" />
+          <button id="btn-scope-add" class="send-btn">+ ADD</button>
+        </div>
+
+        <div id="scope-domain-list" class="scope-domain-list">
+          <div class="scope-empty">No domains in scope — all traffic shown</div>
+        </div>
+
+        <div class="scope-legend">
+          <span class="legend-title">HOW SCOPE WORKS</span>
+          <div class="legend-row"><span class="legend-dot in"></span><span>In scope — shown normally</span></div>
+          <div class="legend-row"><span class="legend-dot out"></span><span>Out of scope — dimmed (DIM mode) or hidden (HIDE mode)</span></div>
+          <div class="legend-row"><span class="legend-dot wild"></span><span>Wildcard support: *.example.com matches all subdomains</span></div>
+        </div>
+
+      </div>
+    </div>
+
     <!-- ═══ STATUS BAR ═══ -->
     <footer id="statusbar">
       <span id="status-msg">PhantomProxy ready</span>
-      <span id="status-version">v1.0.0</span>
+      <span id="status-version">v2.0.1</span>
     </footer>
 
   </div>
 
+  <script src="features.js"></script>
   <script src="panel.js"></script>
 </body>
 </html>
