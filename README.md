@@ -260,16 +260,13 @@ Full privacy policy: [thevillagehacker.com/projects/Phantom-Proxy_privacy-policy
 ## Screenshots
 
 ### Scope Tab
-![Scope Tab](/screenshots/00.png)
+![Scope Tab](/screenshots/scope.png)
 
 ### History Tab
-![History Tab](/screenshots/01.png)
+![History Tab](/screenshots/history.png)
 
 ### Repeater Tab
-![Repeater Tab](/screenshots/02.png)
+![Repeater Tab](/screenshots/repeater.png)
 
 ### Decoder Tab — JWT Decode
-![Decoder JWT](/screenshots/03.png)
-
-### Decoder Tab — Base64 Decode
-![Decoder Base64](/screenshots/04.png)
+![Decoder JWT](/screenshots/decode.png)
