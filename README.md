@@ -269,4 +269,4 @@ Full privacy policy: [thevillagehacker.com/projects/Phantom-Proxy_privacy-policy
 ![Repeater Tab](/screenshots/repeater.png)
 
 ### Decoder Tab — JWT Decode
-![Decoder JWT](/screenshots/decode.png)
+![Decoder JWT](/screenshots/decoder.png)
