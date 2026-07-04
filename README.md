@@ -141,6 +141,46 @@ Click **⬆ IMPORT CURL** to paste a cURL command directly into the Repeater. Su
 
 ---
 
+
+### ⚡ Intruder Tab (Added by @dr1408)
+
+Automated attack engine for fuzzing, brute-forcing, and parameter testing — built for security researchers and bug bounty hunters.
+
+**What it does**
+- Automates request fuzzing by replacing payload markers (`§payload§`) with values from a list
+- Supports multiple attack types for flexible testing strategies
+
+**Attack Types**
+| Type | Description |
+|------|-------------|
+| **Sniper** | Replaces one payload position at a time — ideal for testing a single parameter |
+| **Battering Ram** | Replaces all positions with the same payload value simultaneously |
+| **Pitchfork** | Pairs multiple payload lists (e.g., usernames and passwords) position by position |
+| **Cluster Bomb** | Tests all possible combinations across multiple payload positions |
+
+**Payload Sources**
+- **Simple List** — paste a custom list (one per line)
+- **Load from File** — upload a `.txt`, `.csv`, or `.lst` file
+- **Numbers** — generate a numeric sequence (start, end, step)
+
+**Grep Match**
+- Highlight responses containing specific patterns (e.g., `"ok": true`)
+- Grep column in results shows which patterns matched
+
+**Results Table**
+- Payload, Status, Grep matches, Length, Time
+- Click **View** to inspect the full response body
+
+**Common Use Cases**
+- **Login brute-force** — test password lists against login endpoints
+- **Parameter fuzzing** — discover hidden endpoints or injection points
+- **OTP brute-force** — test 6-digit codes with numeric payloads
+- **Cluster Bomb** — test username/password combinations from `user:pass` lists
+
+**How it works**
+Intruder sends requests directly from the background service worker, bypassing CORS restrictions. Each response is captured and displayed in the results table. for pitchfork and clusterbomb attacks use a list with this pattern user:pass no need for 2 lists 
+
+
 ### ⌥ Decoder Tab
 Built-in encoder/decoder for common security research transforms.
 
@@ -192,11 +232,10 @@ phantom-proxy/
     └── icon128.png
 ```
 
-### How traffic capture works
+### How traffic capture works (v2.1 and earlier)
 
-PhantomProxy uses the browser's `webRequest` API — a passive observation API that fires events for every HTTP request without intercepting or blocking traffic.
+**Legacy approach using `webRequest` API:**
 
-```
 Page makes request
       ↓
 onBeforeRequest  → captures URL, method, request body
@@ -207,11 +246,44 @@ onCompleted      → finalizes timing, pushes to requestStore
 broadcastToDevtools() → postMessage to panel port
       ↓
 Panel renders row in History tab
-```
 
 The background service worker stores up to 500 requests in memory and broadcasts each completed request to all connected panels (both DevTools and standalone) via `chrome.runtime.connect` ports.
 
 Repeater requests are fired from the background worker using `fetch()` — this bypasses CORS restrictions that would block requests from the panel page context.
+
+---
+
+### How traffic capture works (v2.2 and later)
+
+**Current approach using `chrome.debugger` API (CDP — Chrome DevTools Protocol):**
+
+This migration was introduced in v2.2 to preserve the original order of headers and form data, and to enable full response body capture — critical for accurate Intruder attacks and security testing.
+
+Page makes request
+      ↓
+chrome.debugger.onEvent (Network.requestWillBeSent)
+      ↓
+Captures URL, method, request body (raw — order preserved)
+      ↓
+chrome.debugger.onEvent (Network.requestWillBeSentExtraInfo)
+      ↓
+Captures complete request headers (including Cookie, Accept-Encoding, Sec-Fetch-*)
+      ↓
+chrome.debugger.onEvent (Network.responseReceived)
+      ↓
+Captures response status + headers
+      ↓
+chrome.debugger.sendCommand (Network.getResponseBody)
+      ↓
+Retrieves full response body
+      ↓
+broadcastToDevtools() → postMessage to panel port
+      ↓
+Panel renders row in History tab
+
+The background service worker stores up to 500 requests in memory and broadcasts each completed request to all connected panels (both DevTools and standalone) via `chrome.runtime.connect` ports.
+
+Repeater and Intruder requests are fired from the background worker using `fetch()` — this bypasses CORS restrictions that would block requests from the panel page context.
 
 ### Security design
 
@@ -229,11 +301,9 @@ Repeater requests are fired from the background worker using `fetch()` — this 
 
 | Permission | Why it's needed |
 |---|---|
-| `webRequest` | To observe HTTP traffic — the core function of the tool |
+| `debugger` | To capture network traffic via CDP (Chrome DevTools Protocol) — preserves original header and body order, enables full response body capture |
 | `tabs` | To associate requests with the correct tab and populate the standalone tab selector |
 | `storage` | To persist scope definitions and bookmarks across sessions |
-| `scripting` | For DevTools panel integration |
-| `webNavigation` | To detect page navigation and handle request lifecycle correctly |
 | `windows` | To open PhantomProxy as a standalone window via the Execute button |
 | `<all_urls>` | To observe requests to any domain — required since security testing targets vary |
 
@@ -241,8 +311,9 @@ Repeater requests are fired from the background worker using `fetch()` — this 
 
 ## Notes
 
-- Requires Microsoft Edge 88+ or Chrome 88+ (Manifest V3 + `webRequest`)
-- Response bodies are **not** captured passively in the History tab — this is a browser platform restriction of the `webRequest` API. Use the **RES PRETTY** tab or Repeater to re-send and read the response body
+- Requires Microsoft Edge 88+ or Chrome 88+ (Manifest V3 + `chrome.debugger`)
+- **v2.2 update:** The extension now uses the `chrome.debugger` API (CDP) instead of `webRequest` for network capture. This preserves the original order of headers and form data, and enables full response body capture in the History tab — critical for accurate Intruder attacks and security testing
+- Response bodies are now captured passively in the History tab via CDP (`Network.getResponseBody`), eliminating the need to re-fetch for response inspection
 - The extension does **not** intercept, block, or modify live traffic — it is purely passive observation + active replay
 - Works on `http://` and `https://` pages only
 - Extension pages (`chrome://`, `edge://`, `devtools://`, `file://`) are excluded from capture
