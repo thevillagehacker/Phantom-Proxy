@@ -1,4 +1,4 @@
-// PhantomProxy — Panel v2.1 (Android Fixed + Intruder)
+// PhantomProxy — Panel v2.2 (Android Fixed + Intruder + Debugger)
 // Single clean file — no patches, no appends, no duplicate declarations
 "use strict";
 
@@ -607,9 +607,22 @@ function renderDetail(req) {
 function renderKV(id, obj) {
   var c = document.getElementById(id);
   c.innerHTML = "";
-  var keys = Object.keys(obj).filter(function(k) {
-    return Object.prototype.hasOwnProperty.call(obj, k);
+  
+  var data = {};
+  if (Array.isArray(obj)) {
+    obj.forEach(function(h) {
+      if (h && h.name) {
+        data[h.name] = h.value;
+      }
+    });
+  } else {
+    data = obj;
+  }
+  
+  var keys = Object.keys(data).filter(function(k) {
+    return Object.prototype.hasOwnProperty.call(data, k);
   });
+  
   if (!keys.length) {
     var d = document.createElement("div");
     d.style.cssText = "color:var(--text-dim);padding:10px;font-family:var(--font-ui)";
@@ -617,15 +630,15 @@ function renderKV(id, obj) {
     c.appendChild(d);
     return;
   }
+  
   keys.forEach(function(k) {
     var row = document.createElement("div");
     row.className = "kv-row";
     row.appendChild(el("span","kv-key", k));
-    row.appendChild(el("span","kv-val", obj[k]));
+    row.appendChild(el("span","kv-val", data[k]));
     c.appendChild(row);
   });
 }
-
 // ─── Detail Pretty Tab ────────────────────────────────
 function fetchDetailPretty(req) {
   var out = document.getElementById("detail-res-pretty");
@@ -697,21 +710,37 @@ document.getElementById("btn-send-intruder").addEventListener("click", function(
     return;
   }
   
+  // ✅ Convert body to string
+  var body = req.requestBody || "";
+  if (typeof body === 'object') {
+    body = JSON.stringify(body);
+  }
+  
+  // ✅ Convert headers to object if they are an array
+  var headers = req.requestHeaders || {};
+  var headerObj = {};
+  if (Array.isArray(headers)) {
+    headers.forEach(function(h) {
+      if (h && h.name) {
+        headerObj[h.name] = h.value;
+      }
+    });
+  } else {
+    headerObj = headers;
+  }
+  
   // Build raw request
   var raw = req.method + ' ' + req.url + ' HTTP/1.1\n';
-  Object.keys(req.requestHeaders || {}).forEach(function(k) {
+  Object.keys(headerObj).forEach(function(k) {
     if (k.toLowerCase() !== 'content-length') {
-      raw += k + ': ' + req.requestHeaders[k] + '\n';
+      raw += k + ': ' + headerObj[k] + '\n';
     }
   });
-  raw += '\n' + (req.requestBody || '');
+  raw += '\n' + body;
   
   document.getElementById('intruder-request').value = raw;
   switchTab('intruder');
-  
-  // === ADD THE WORKSPACE COMPONENT INITIALIZATION HERE ===
   initIntruderTabs(); 
-  
   setStatus('✅ Request sent to Intruder');
 });
 
@@ -728,14 +757,33 @@ function switchTab(name) {
 function createSession(req) {
   var id = ++sessionCounter;
   var h  = {};
-  if (req && req.requestHeaders) Object.assign(h, req.requestHeaders);
+  if (req && req.requestHeaders) {
+    // ✅ Convert array headers to object
+    var headers = req.requestHeaders;
+    if (Array.isArray(headers)) {
+      headers.forEach(function(header) {
+        if (header && header.name) {
+          h[header.name] = header.value;
+        }
+      });
+    } else {
+      Object.assign(h, headers);
+    }
+  }
+  
+  // ✅ Convert body to string
+  var body = req ? req.requestBody || "" : "";
+  if (typeof body === 'object') {
+    body = JSON.stringify(body);
+  }
+  
   repeaterSessions.push({
     id: id,
     label: "#" + id + " " + (req ? req.method : "NEW"),
     method: req ? validMethod(req.method) : "GET",
     url: req ? req.url : "",
     headers: h,
-    body: req ? (req.requestBody || "") : "",
+    body: body,
     rawContent: req ? buildRaw(req) : "",
     response: null
   });
@@ -789,11 +837,26 @@ function loadSession(s) {
   document.getElementById("rep-raw").value    = s.rawContent;
   var hc = document.getElementById("headers-editor-rows");
   hc.innerHTML = "";
-  Object.keys(s.headers).forEach(function(k) {
-    if (!Object.prototype.hasOwnProperty.call(s.headers,k)) return;
-    if (k.toLowerCase()==="host" || k.toLowerCase()==="content-length") return;
-    addHdrRow(k, s.headers[k]);
-  });
+  
+  var headers = s.headers || {};
+  
+  // ✅ Handle array headers
+  if (Array.isArray(headers)) {
+    headers.forEach(function(h) {
+      if (h && h.name) {
+        if (h.name.toLowerCase() !== "host" && h.name.toLowerCase() !== "content-length") {
+          addHdrRow(h.name, h.value);
+        }
+      }
+    });
+  } else {
+    Object.keys(headers).forEach(function(k) {
+      if (!Object.prototype.hasOwnProperty.call(headers, k)) return;
+      if (k.toLowerCase()==="host" || k.toLowerCase()==="content-length") return;
+      addHdrRow(k, headers[k]);
+    });
+  }
+  
   if (s.response) showRepResponse(s.response);
   else clearRepResponse();
 }
@@ -883,8 +946,22 @@ function showRepResponse(result) {
   document.getElementById("rep-meta-duration").textContent = fmtDuration(result.duration);
   document.getElementById("rep-meta-size").textContent     = fmtSize(result.size||0);
 
+  // ✅ FIX: Extract content-type from array or object
+  var ct = "";
+  var responseHeaders = result.responseHeaders || {};
+  
+  if (Array.isArray(responseHeaders)) {
+    responseHeaders.forEach(function(h) {
+      if (h && h.name && h.name.toLowerCase() === "content-type") {
+        ct = h.value;
+      }
+    });
+  } else {
+    ct = responseHeaders["content-type"] || responseHeaders["Content-Type"] || "";
+  }
+  
   lastRespBody = result.body || result.error || "(empty)";
-  lastRespType = (result.responseHeaders && result.responseHeaders["content-type"]) || "";
+  lastRespType = ct;
 
   var acts = document.getElementById("rep-res-tab-actions");
   if (acts) acts.classList.add("visible");
@@ -1214,10 +1291,22 @@ function fmtSize(b) {
 
 function buildCurl(req) {
   var cmd = "curl -X " + req.method + " '" + req.url.replace(/'/g,"'\\''") + "'";
-  Object.keys(req.requestHeaders||{}).forEach(function(k) {
-    if (!Object.prototype.hasOwnProperty.call(req.requestHeaders,k)) return;
-    cmd += " \\\n  -H '" + (k+": "+req.requestHeaders[k]).replace(/'/g,"'\\''") + "'";
-  });
+  
+  var headers = req.requestHeaders || {};
+  
+  if (Array.isArray(headers)) {
+    headers.forEach(function(h) {
+      if (h && h.name) {
+        cmd += " \\\n  -H '" + (h.name + ": " + h.value).replace(/'/g,"'\\''") + "'";
+      }
+    });
+  } else {
+    Object.keys(headers).forEach(function(k) {
+      if (!Object.prototype.hasOwnProperty.call(headers, k)) return;
+      cmd += " \\\n  -H '" + (k + ": " + headers[k]).replace(/'/g,"'\\''") + "'";
+    });
+  }
+  
   if (req.requestBody) cmd += " \\\n  -d '" + req.requestBody.replace(/'/g,"'\\''") + "'";
   return cmd;
 }
@@ -1225,10 +1314,24 @@ function buildCurl(req) {
 function buildRaw(req) {
   var p = parseURL(req.url);
   var r = req.method + " " + (p.path||"/") + " HTTP/1.1\n" + "Host: " + p.host + "\n";
-  Object.keys(req.requestHeaders||{}).forEach(function(k) {
-    if (k.toLowerCase()!=="host") r += k+": "+req.requestHeaders[k]+"\n";
-  });
-  if (req.requestBody) r += "\n"+req.requestBody;
+  
+  var headers = req.requestHeaders || {};
+  
+  if (Array.isArray(headers)) {
+    headers.forEach(function(h) {
+      if (h && h.name && h.name.toLowerCase() !== "host") {
+        r += h.name + ": " + h.value + "\n";
+      }
+    });
+  } else {
+    Object.keys(headers).forEach(function(k) {
+      if (k.toLowerCase() !== "host") {
+        r += k + ": " + headers[k] + "\n";
+      }
+    });
+  }
+  
+  if (req.requestBody) r += "\n" + req.requestBody;
   return r;
 }
 
@@ -1730,10 +1833,29 @@ function stopIntruder() {
 }
 
 // ─── Init ─────────────────────────────────────────────
+
+// ─── DEBUGGER AUTO-START ──────────────────────────────
+// Start debugger when panel opens
+function startDebugger() {
+  sendBg({ type: "START_DEBUGGER" });
+  setStatus("🔍 Debugger starting...");
+}
+
+// Stop debugger when panel closes
+window.addEventListener("unload", function() {
+  sendBg({ type: "STOP_DEBUGGER" });
+});
+
+// ─── Initialize ───────────────────────────────────────
 if (IS_STANDALONE) initStandalone();
 connectBackground();
 setStatus('PhantomProxy ready');
 createSession(null);
+
+// Auto-start debugger after connection is established
+setTimeout(function() {
+  startDebugger();
+}, 1000);
 
 loadBookmarks();
 

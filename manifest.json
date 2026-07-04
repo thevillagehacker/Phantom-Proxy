@@ -1,17 +1,14 @@
 {
   "manifest_version": 3,
   "name": "PhantomProxy",
-  "version": "2.1",
-  "description": "HTTP traffic inspector & repeater for security researchers. Visualize, filter, and replay requests \u2014 like a lightweight Burp Suite.",
+  "version": "2.2",
+  "description": "HTTP traffic inspector & repeater for security researchers. Visualize, filter, and replay requests — like a lightweight Burp Suite.",
   "author": "PhantomProxy",
   "permissions": [
     "storage",
-    "webNavigation",
     "tabs",
     "windows",
-    "webRequest",
-    "webRequestAuthProvider",
-    "scripting"
+    "debugger"
   ],
   "host_permissions": [
     "<all_urls>"
