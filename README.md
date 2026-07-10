@@ -275,17 +275,3 @@ PhantomProxy collects no data. All captured traffic is processed entirely within
 Full privacy policy: [thevillagehacker.com/projects/Phantom-Proxy_privacy-policy.html](https://thevillagehacker.com/projects/Phantom-Proxy_privacy-policy.html)
 
 ---
-
-## Screenshots
-
-### Scope Tab
-![Scope Tab](/screenshots/scope.png)
-
-### History Tab
-![History Tab](/screenshots/history.png)
-
-### Repeater Tab
-![Repeater Tab](/screenshots/repeater.png)
-
-### Decoder Tab — JWT Decode
-![Decoder JWT](/screenshots/decoder.png)
