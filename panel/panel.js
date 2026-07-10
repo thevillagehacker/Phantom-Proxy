@@ -1,5 +1,5 @@
-// PhantomProxy — Panel v2.0.1
-// Single clean file — no patches, no appends, no duplicate declarations
+// PhantomProxy — Panel v2.3.0
+// Scope · Intercept · History · Repeater · Tools · Decoder
 "use strict";
 
 // ─── Constants ────────────────────────────────────────
@@ -165,12 +165,37 @@ function onBgMessage(msg) {
       break;
 
     case "REPEATER_RESPONSE":
-      // Route to detail-pretty or repeater depending on id prefix
+      // Route to detail-pretty, fuzzer, or repeater depending on id prefix
       if (typeof msg.id === "string" && msg.id.indexOf("dp_") === 0) {
         showDetailPrettyResult(msg.result);
+      } else if (typeof msg.id === "string" && msg.id.indexOf("fuzz_") === 0) {
+        if (window.PhantomAdvanced && PhantomAdvanced.handleFuzzResponse) {
+          PhantomAdvanced.handleFuzzResponse(msg.id, msg.result);
+        }
       } else {
         onRepeaterResponse(msg.id, msg.result);
       }
+      break;
+
+    case "COOKIES_RESULT":
+      onCookiesResult(msg);
+      break;
+
+    case "INTERCEPT_STATE":
+      onInterceptState(msg);
+      break;
+    case "INTERCEPT_PAUSED":
+      onInterceptPaused(msg);
+      break;
+    case "INTERCEPT_RELEASED":
+      onInterceptReleased(msg);
+      break;
+    case "INTERCEPT_ERROR":
+      if (msg.error) setStatus("Intercept: " + msg.error);
+      if (typeof msg.queueSize === "number") updateInterceptQueueCount(msg.queueSize);
+      break;
+    case "INTERCEPT_OVERFLOW":
+      if (msg.message) setStatus("⚠ " + msg.message);
       break;
   }
 }
@@ -178,11 +203,7 @@ function onBgMessage(msg) {
 // ─── Tab Navigation ───────────────────────────────────
 document.querySelectorAll(".tab-btn").forEach(function(btn) {
   btn.addEventListener("click", function() {
-    document.querySelectorAll(".tab-btn").forEach(function(b) { b.classList.remove("active"); });
-    document.querySelectorAll(".tab-pane").forEach(function(p) { p.classList.add("hidden"); });
-    btn.classList.add("active");
-    var pane = document.getElementById("tab-" + btn.dataset.tab);
-    if (pane) pane.classList.remove("hidden");
+    switchTab(btn.dataset.tab);
   });
 });
 
@@ -300,10 +321,14 @@ function getFiltered() {
     }
 
     // Scope filter — history tab "IN SCOPE ONLY" chip
+    // Uses scopeMatchDomain so it works even when the global SCOPE toggle is OFF
+    // (matches domains independently of DIM/HIDE mode, as documented)
     if (scopeFilterOn && window.PhantomFeatures) {
       if (!PhantomFeatures.scopeState.domains.length) {
         // No domains defined — let everything through
-      } else if (!PhantomFeatures.scopeMatch(req.url)) {
+      } else if (typeof PhantomFeatures.scopeMatchDomain === "function"
+          ? !PhantomFeatures.scopeMatchDomain(req.url)
+          : !PhantomFeatures.scopeMatch(req.url)) {
         return false;
       }
     }
@@ -404,6 +429,22 @@ function makeRow(req) {
   // Highlight flags
   var flagsSpan = document.createElement("span");
   flagsSpan.className = "row-flags";
+  // Note / tag indicator
+  if (window.PhantomAdvanced && PhantomAdvanced.getNote) {
+    var noteInfo = PhantomAdvanced.getNote(req.id);
+    if (noteInfo && (noteInfo.note || (noteInfo.tags && noteInfo.tags.length))) {
+      var nd = document.createElement("span");
+      nd.className = "row-note-dot";
+      nd.title = noteInfo.note || (noteInfo.tags || []).join(", ");
+      flagsSpan.appendChild(nd);
+      if (noteInfo.tags && noteInfo.tags.length) {
+        var tg = document.createElement("span");
+        tg.className = "row-tags";
+        tg.textContent = noteInfo.tags.slice(0, 2).join(",");
+        flagsSpan.appendChild(tg);
+      }
+    }
+  }
   if (window.PhantomFeatures) {
     var hits = PhantomFeatures.getHighlights(req);
     // Show top 2 badges to keep row clean
@@ -495,6 +536,9 @@ function selectReq(id) {
   });
   var req = allRequests.find(function(r) { return r.id === id; });
   if (req) renderDetail(req);
+  if (window.PhantomAdvanced && PhantomAdvanced.fillNoteEditor) {
+    PhantomAdvanced.fillNoteEditor(id);
+  }
 }
 
 function showDetailEmpty() {
@@ -635,6 +679,54 @@ function switchTab(name) {
   if (btn) btn.classList.add("active");
   var pane = document.getElementById("tab-" + name);
   if (pane) pane.classList.remove("hidden");
+  if (window.PhantomAdvanced && PhantomAdvanced.onTabActivated) {
+    PhantomAdvanced.onTabActivated(name);
+  }
+}
+
+// ─── Cookie helpers ───────────────────────────────────
+/**
+ * Parse a Cookie header string into [{name, value}, ...].
+ * Handles "a=1; b=2" and trims whitespace. Values may contain '='.
+ */
+function parseCookieHeader(str) {
+  if (!str || typeof str !== "string") return [];
+  return str.split(";").map(function(part) {
+    part = part.trim();
+    if (!part) return null;
+    var eq = part.indexOf("=");
+    if (eq < 0) return { name: part, value: "" };
+    return { name: part.slice(0, eq).trim(), value: part.slice(eq + 1).trim() };
+  }).filter(function(c) { return c && c.name; });
+}
+
+function cookiesToHeader(list) {
+  if (!list || !list.length) return "";
+  return list
+    .filter(function(c) { return c && c.name; })
+    .map(function(c) { return c.name + "=" + (c.value == null ? "" : c.value); })
+    .join("; ");
+}
+
+/**
+ * Extract cookies for a session from request headers (Cookie header)
+ * and optional explicit cookies array.
+ */
+function extractCookiesFromReq(req) {
+  if (!req) return [];
+  if (req.cookies && Array.isArray(req.cookies) && req.cookies.length) {
+    return req.cookies.map(function(c) {
+      return { name: c.name || "", value: c.value == null ? "" : String(c.value) };
+    });
+  }
+  var h = req.requestHeaders || {};
+  var keys = Object.keys(h);
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i].toLowerCase() === "cookie") {
+      return parseCookieHeader(h[keys[i]]);
+    }
+  }
+  return [];
 }
 
 // ─── Repeater Sessions ────────────────────────────────
@@ -642,18 +734,30 @@ function createSession(req) {
   var id = ++sessionCounter;
   var h  = {};
   if (req && req.requestHeaders) Object.assign(h, req.requestHeaders);
+  var cookies = extractCookiesFromReq(req);
+  // Keep headers and cookies in sync: if we have a Cookie header and no pairs, parse it
+  if (!cookies.length) {
+    Object.keys(h).forEach(function(k) {
+      if (k.toLowerCase() === "cookie") cookies = parseCookieHeader(h[k]);
+    });
+  }
   repeaterSessions.push({
     id: id,
     label: "#" + id + " " + (req ? req.method : "NEW"),
     method: req ? validMethod(req.method) : "GET",
     url: req ? req.url : "",
     headers: h,
+    cookies: cookies,
     body: req ? (req.requestBody || "") : "",
     rawContent: req ? buildRaw(req) : "",
     response: null
   });
   renderSessionTabs();
   activateSession(id);
+  // If sent from history without a Cookie header, try loading browser jar
+  if (req && req.url && !cookies.length) {
+    requestBrowserCookies(id, req.url);
+  }
 }
 
 function renderSessionTabs() {
@@ -705,8 +809,13 @@ function loadSession(s) {
   Object.keys(s.headers).forEach(function(k) {
     if (!Object.prototype.hasOwnProperty.call(s.headers,k)) return;
     if (k.toLowerCase()==="host" || k.toLowerCase()==="content-length") return;
+    // Cookie is edited in the COOKIES tab — still show a read-only-ish row if present
+    // but prefer the cookies array as source of truth (synced on save/send)
     addHdrRow(k, s.headers[k]);
   });
+  // Cookies tab
+  if (!s.cookies) s.cookies = [];
+  renderCookieRows(s.cookies);
   if (s.response) showRepResponse(s.response);
   else clearRepResponse();
 }
@@ -719,6 +828,48 @@ function saveSession() {
   s.body       = document.getElementById("rep-body").value;
   s.rawContent = document.getElementById("rep-raw").value;
   s.headers    = collectHdrs();
+  s.cookies    = collectCookies();
+  // Prefer COOKIES tab when it has pairs; otherwise adopt Cookie header from HEADERS
+  if (s.cookies.length) {
+    syncCookieHeader(s);
+  } else {
+    Object.keys(s.headers).forEach(function(k) {
+      if (k.toLowerCase() === "cookie") {
+        s.cookies = parseCookieHeader(s.headers[k]);
+      }
+    });
+  }
+}
+
+/**
+ * Write cookies array into the Cookie request header (or remove it if empty).
+ */
+function syncCookieHeader(s) {
+  if (!s.headers) s.headers = {};
+  // Drop any existing Cookie key (case-insensitive)
+  Object.keys(s.headers).forEach(function(k) {
+    if (k.toLowerCase() === "cookie") delete s.headers[k];
+  });
+  var hdr = cookiesToHeader(s.cookies);
+  if (hdr) s.headers["Cookie"] = hdr;
+
+  // Also refresh the Cookie row in the headers editor if visible
+  var found = false;
+  document.querySelectorAll("#headers-editor-rows .header-row").forEach(function(row) {
+    var ki = row.querySelector(".header-key");
+    if (ki && ki.value.trim().toLowerCase() === "cookie") {
+      found = true;
+      if (hdr) {
+        row.querySelector(".header-val").value = hdr;
+      } else {
+        row.remove();
+      }
+    }
+  });
+  if (hdr && !found) {
+    // Don't auto-add Cookie to headers UI while user is on cookies tab —
+    // it will appear next loadSession. Keep data model consistent only.
+  }
 }
 
 function clearEditor() {
@@ -727,6 +878,8 @@ function clearEditor() {
   document.getElementById("rep-body").value   = "";
   document.getElementById("rep-raw").value    = "";
   document.getElementById("headers-editor-rows").innerHTML = "";
+  var cr = document.getElementById("cookies-editor-rows");
+  if (cr) cr.innerHTML = "";
   clearRepResponse();
 }
 
@@ -751,12 +904,127 @@ document.getElementById("btn-add-header").addEventListener("click", function() {
 
 function collectHdrs() {
   var h = {};
-  document.querySelectorAll(".header-row").forEach(function(row) {
+  document.querySelectorAll("#headers-editor-rows .header-row").forEach(function(row) {
     var k = row.querySelector(".header-key").value.trim();
     var v = row.querySelector(".header-val").value.trim();
     if (k) h[k] = v;
   });
   return h;
+}
+
+// ─── Cookie Editor ────────────────────────────────────
+function addCookieRow(name, value) {
+  var container = document.getElementById("cookies-editor-rows");
+  if (!container) return;
+  var row = document.createElement("div");
+  row.className = "cookie-row";
+  var ni = document.createElement("input");
+  ni.type = "text"; ni.className = "cookie-name"; ni.placeholder = "name";
+  ni.spellcheck = false; ni.value = name || "";
+  var vi = document.createElement("input");
+  vi.type = "text"; vi.className = "cookie-val"; vi.placeholder = "value";
+  vi.spellcheck = false; vi.value = value == null ? "" : value;
+  var db = document.createElement("button");
+  db.className = "btn-del-header"; db.title = "Remove"; db.textContent = "✕";
+  db.addEventListener("click", function() { row.remove(); });
+  row.append(ni, vi, db);
+  container.appendChild(row);
+}
+
+function renderCookieRows(list) {
+  var container = document.getElementById("cookies-editor-rows");
+  if (!container) return;
+  container.innerHTML = "";
+  if (list && list.length) {
+    list.forEach(function(c) { addCookieRow(c.name, c.value); });
+  }
+}
+
+function collectCookies() {
+  var out = [];
+  document.querySelectorAll("#cookies-editor-rows .cookie-row").forEach(function(row) {
+    var n = row.querySelector(".cookie-name");
+    var v = row.querySelector(".cookie-val");
+    if (!n) return;
+    var name = n.value.trim();
+    if (!name) return;
+    out.push({ name: name, value: v ? v.value : "" });
+  });
+  return out;
+}
+
+var _btnAddCookie = document.getElementById("btn-add-cookie");
+if (_btnAddCookie) {
+  _btnAddCookie.addEventListener("click", function() { addCookieRow("", ""); });
+}
+
+var _btnLoadCookies = document.getElementById("btn-load-browser-cookies");
+if (_btnLoadCookies) {
+  _btnLoadCookies.addEventListener("click", function() {
+    var s = repeaterSessions.find(function(x) { return x.id === activeSessionId; });
+    var url = document.getElementById("rep-url").value.trim() || (s && s.url) || "";
+    if (!url) {
+      setStatus("Set a URL first to load browser cookies");
+      return;
+    }
+    requestBrowserCookies(activeSessionId, url, true);
+  });
+}
+
+/** Pending cookie loads: requestId → { sessionId, merge, url } */
+var _cookieRequests = {};
+var _cookieReqCounter = 0;
+
+function requestBrowserCookies(sessionId, url, merge) {
+  var rid = "ck_" + (++_cookieReqCounter);
+  _cookieRequests[rid] = { sessionId: sessionId, merge: !!merge, url: url };
+  sendBg({ type: "GET_COOKIES", url: url, requestId: rid });
+  setStatus("Loading browser cookies for " + url + "…");
+}
+
+function onCookiesResult(msg) {
+  var meta = msg.requestId ? _cookieRequests[msg.requestId] : null;
+  if (msg.requestId) delete _cookieRequests[msg.requestId];
+  var sessionId = meta ? meta.sessionId : activeSessionId;
+  var merge = meta ? meta.merge : true;
+  var s = repeaterSessions.find(function(x) { return x.id === sessionId; });
+  if (!s) return;
+
+  var incoming = (msg.cookies || []).map(function(c) {
+    return { name: c.name, value: c.value == null ? "" : String(c.value) };
+  });
+
+  if (!incoming.length) {
+    if (merge) setStatus("No browser cookies found for this URL");
+    return;
+  }
+
+  if (merge && s.cookies && s.cookies.length) {
+    // Merge by name (incoming overwrites)
+    var map = {};
+    s.cookies.forEach(function(c) { if (c.name) map[c.name] = c.value; });
+    incoming.forEach(function(c) { if (c.name) map[c.name] = c.value; });
+    s.cookies = Object.keys(map).map(function(n) { return { name: n, value: map[n] }; });
+  } else {
+    s.cookies = incoming;
+  }
+
+  syncCookieHeader(s);
+  if (activeSessionId === sessionId) {
+    renderCookieRows(s.cookies);
+    // Refresh Cookie header row in headers editor
+    var hdr = cookiesToHeader(s.cookies);
+    var updated = false;
+    document.querySelectorAll("#headers-editor-rows .header-row").forEach(function(row) {
+      var ki = row.querySelector(".header-key");
+      if (ki && ki.value.trim().toLowerCase() === "cookie") {
+        row.querySelector(".header-val").value = hdr;
+        updated = true;
+      }
+    });
+    if (hdr && !updated) addHdrRow("Cookie", hdr);
+  }
+  setStatus("Loaded " + incoming.length + " cookie" + (incoming.length !== 1 ? "s" : "") + " ✓");
 }
 
 // ─── Send Request ─────────────────────────────────────
@@ -775,10 +1043,39 @@ function doSend() {
   if (activeEtab && activeEtab.dataset.etab === "rep-body-editor" && s.body) {
     h["Content-Type"] = document.getElementById("body-content-type").value;
   }
+  // Ensure Cookie header reflects cookies tab
+  var cookieHdr = cookiesToHeader(s.cookies);
+  Object.keys(h).forEach(function(k) {
+    if (k.toLowerCase() === "cookie") delete h[k];
+  });
+  if (cookieHdr) h["Cookie"] = cookieHdr;
 
-  sendBg({ type:"SEND_REPEATER", request:{ id:activeSessionId, method:s.method, url:s.url, requestHeaders:h, requestBody:s.body||null }});
+  var outbound = {
+    id: activeSessionId,
+    method: s.method,
+    url: s.url,
+    requestHeaders: h,
+    requestBody: s.body || null,
+    cookies: s.cookies || []
+  };
+  // Match & replace rules (Tools tab) — applied before network send
+  if (window.PhantomAdvanced && PhantomAdvanced.applyMatchReplace) {
+    outbound = PhantomAdvanced.applyMatchReplace(outbound);
+  }
+  // Client-side SSRF guard (worker re-validates)
+  if (window.PhantomSecurity) {
+    var uerr = PhantomSecurity.validateHttpUrl(outbound.url);
+    if (uerr) {
+      btn.disabled = false;
+      btn.textContent = "▶ SEND";
+      setStatus("Blocked: " + uerr);
+      return;
+    }
+  }
+
+  sendBg({ type: "SEND_REPEATER", request: outbound });
   btn.disabled=false; btn.textContent="▶ SEND";
-  setStatus("Sending " + s.method + " " + s.url + "…");
+  setStatus("Sending " + outbound.method + " " + outbound.url + "…");
 }
 
 function onRepeaterResponse(sid, result) {
@@ -975,8 +1272,8 @@ function runDecoder() {
     else if (act==="b64-encode")  out = btoa(unescape(encodeURIComponent(inp)));
     else if (act==="url-decode")  out = decodeURIComponent(inp);
     else if (act==="url-encode")  out = encodeURIComponent(inp);
-    else if (act==="html-decode") { var ta=document.createElement("textarea"); ta.innerHTML=inp; out=ta.value; }
-    else if (act==="html-encode") out = inp.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    else if (act==="html-decode") out = (window.PhantomSecurity ? PhantomSecurity.htmlDecode(inp) : inp);
+    else if (act==="html-encode") out = (window.PhantomSecurity ? PhantomSecurity.htmlEncode(inp) : inp.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"));
     else if (act==="hex-encode")  out = Array.from(inp).map(function(c){return c.charCodeAt(0).toString(16).padStart(2,"0");}).join("");
     else if (act==="hex-decode") {
       var pairs = inp.replace(/\s/g,"").match(/.{2}/g);
@@ -1362,7 +1659,7 @@ if (_bmFilterBtn) {
   });
 }
 
-// ─── Features v2.0.1 ──────────────────────────────────
+// ─── Features v2.2 ────────────────────────────────────
 if (window.PhantomFeatures) {
   PhantomFeatures.init(
     function() { return allRequests; },          // getRequests
@@ -1374,17 +1671,350 @@ if (window.PhantomFeatures) {
   );
 }
 
-// Update scope toggle button text
-var _scopeToggleBtn = document.getElementById("scope-toggle");
-if (_scopeToggleBtn) {
-  var _origScopeClick = _scopeToggleBtn.onclick;
-  _scopeToggleBtn.addEventListener("click", function() {
-    setTimeout(function() {
-      _scopeToggleBtn.textContent = window.PhantomFeatures && PhantomFeatures.scopeState.enabled
-        ? "SCOPE ON" : "SCOPE OFF";
-    }, 10);
+// Advanced tools (sitemap, search, diff, intruder, …)
+if (window.PhantomAdvanced) {
+  PhantomAdvanced.init({
+    getRequests: function() { return allRequests; },
+    setRequests: function(arr) {
+      allRequests = Array.isArray(arr) ? arr : [];
+      selectedRequestId = null;
+      renderList();
+      showDetailEmpty();
+    },
+    getBookmarks: function() { return bookmarkMap; },
+    setBookmarks: function(map) {
+      if (map && typeof map === "object") {
+        bookmarkMap = map;
+        try { chrome.storage.local.set({ phantomBookmarks: bookmarkMap }); } catch(e) {}
+      }
+    },
+    getScope: function() {
+      return window.PhantomFeatures ? PhantomFeatures.scopeState : null;
+    },
+    setStatus: setStatus,
+    switchTab: switchTab,
+    createSession: createSession,
+    sendBg: sendBg,
+    selectRequest: selectReq,
+    renderList: renderList,
+    getActiveSession: function() {
+      return repeaterSessions.find(function(x) { return x.id === activeSessionId; }) || null;
+    },
+    getLastResponse: function() {
+      var s = repeaterSessions.find(function(x) { return x.id === activeSessionId; });
+      var resp = s && s.response ? s.response : null;
+      return {
+        body: lastRespBody || (resp && resp.body) || "",
+        headers: (resp && resp.responseHeaders) || {},
+        status: resp && resp.statusCode || 0,
+        method: s && s.method,
+        url: s && s.url
+      };
+    }
   });
-  _scopeToggleBtn.textContent = "SCOPE OFF";
+}
+
+// Send to Intruder from history detail
+var _btnFuzz = document.getElementById("btn-send-fuzzer");
+if (_btnFuzz) {
+  _btnFuzz.addEventListener("click", function() {
+    var req = allRequests.find(function(r) { return r.id === selectedRequestId; });
+    if (!req) return;
+    switchTab("tools");
+    var nav = document.querySelector('.tools-nav-btn[data-tools="intruder"]');
+    if (nav) nav.click();
+    if (window.PhantomAdvanced && PhantomAdvanced.loadIntruderFromRequest) {
+      PhantomAdvanced.loadIntruderFromRequest(req);
+    } else {
+      var urlEl = document.getElementById("fuzz-url");
+      var methodEl = document.getElementById("fuzz-method");
+      var tplEl = document.getElementById("fuzz-template");
+      var hdrEl = document.getElementById("fuzz-headers");
+      if (urlEl) urlEl.value = req.url || "";
+      if (methodEl) methodEl.value = req.method || "GET";
+      if (tplEl) tplEl.value = req.requestBody || "";
+      if (hdrEl && req.requestHeaders) {
+        hdrEl.value = Object.keys(req.requestHeaders).map(function(k) {
+          return k + ": " + req.requestHeaders[k];
+        }).join("\n");
+      }
+      setStatus("Loaded into Intruder — mark payload with §…§");
+    }
+  });
+}
+
+// History compare A/B
+function wireCompareBtn(id, side) {
+  var btn = document.getElementById(id);
+  if (!btn) return;
+  btn.addEventListener("click", function() {
+    var req = allRequests.find(function(r) { return r.id === selectedRequestId; });
+    if (!req) { setStatus("Select a request first"); return; }
+    if (window.PhantomAdvanced && PhantomAdvanced.setCompareSide) {
+      PhantomAdvanced.setCompareSide(side, req);
+      switchTab("tools");
+      var nav = document.querySelector('.tools-nav-btn[data-tools="compare"]');
+      if (nav) nav.click();
+    }
+  });
+}
+wireCompareBtn("btn-cmp-a", "a");
+wireCompareBtn("btn-cmp-b", "b");
+
+// Scope toggle button text is managed by PhantomFeatures.updateScopeUI
+var _scopeToggleBtn = document.getElementById("scope-toggle");
+if (_scopeToggleBtn && window.PhantomFeatures && PhantomFeatures.scopeState) {
+  _scopeToggleBtn.textContent = PhantomFeatures.scopeState.enabled ? "SCOPE ON" : "SCOPE OFF";
+}
+
+// ─── Proxy Intercept UI ───────────────────────────────
+var interceptActive = false;
+var interceptQueue = []; // paused entries from SW
+var interceptSelectedId = null;
+
+function getInterceptTargetTabId() {
+  if (IS_STANDALONE) {
+    var sel = document.getElementById("tab-target-select");
+    if (!sel || sel.value === "all") return null;
+    var tid = parseInt(sel.value, 10);
+    return isFinite(tid) ? tid : null;
+  }
+  if (chrome.devtools && chrome.devtools.inspectedWindow) {
+    return chrome.devtools.inspectedWindow.tabId;
+  }
+  return null;
+}
+
+function setInterceptButtons(active) {
+  interceptActive = !!active;
+  var top = document.getElementById("btn-intercept");
+  var mid = document.getElementById("btn-intercept-toggle");
+  var st = document.getElementById("intercept-status");
+  if (top) {
+    top.classList.toggle("active", interceptActive);
+    top.textContent = interceptActive ? "◎ INTERCEPT ON" : "◎ INTERCEPT OFF";
+  }
+  if (mid) {
+    mid.classList.toggle("active", interceptActive);
+    mid.textContent = interceptActive ? "INTERCEPT ON" : "INTERCEPT OFF";
+  }
+  if (st) {
+    st.textContent = interceptActive
+      ? ("Listening · queue " + interceptQueue.length)
+      : "Idle";
+    st.style.color = interceptActive ? "var(--green)" : "var(--text-dim)";
+  }
+}
+
+function updateInterceptQueueCount(n) {
+  var el = document.getElementById("intercept-queue-count");
+  if (el) el.textContent = String(n != null ? n : interceptQueue.length);
+}
+
+function renderInterceptQueue() {
+  var list = document.getElementById("intercept-queue");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!interceptQueue.length) {
+    var empty = document.createElement("div");
+    empty.className = "adv-empty";
+    empty.textContent = interceptActive
+      ? "Waiting for requests… browse the target tab"
+      : "Turn INTERCEPT ON to hold live requests";
+    list.appendChild(empty);
+    updateInterceptQueueCount(0);
+    return;
+  }
+  interceptQueue.forEach(function(entry) {
+    var row = document.createElement("div");
+    row.className = "intercept-queue-row" +
+      (entry.networkId === interceptSelectedId ? " selected" : "");
+    var m = document.createElement("span");
+    m.className = "intercept-q-method";
+    m.textContent = entry.method || "";
+    var u = document.createElement("span");
+    u.className = "intercept-q-url";
+    u.textContent = entry.url || "";
+    u.title = entry.url || "";
+    var t = document.createElement("span");
+    t.className = "intercept-q-type";
+    t.textContent = entry.resourceType || "";
+    row.append(m, u, t);
+    row.addEventListener("click", function() {
+      selectInterceptEntry(entry.networkId);
+    });
+    list.appendChild(row);
+  });
+  updateInterceptQueueCount(interceptQueue.length);
+}
+
+function selectInterceptEntry(networkId) {
+  interceptSelectedId = networkId;
+  var entry = null;
+  for (var i = 0; i < interceptQueue.length; i++) {
+    if (interceptQueue[i].networkId === networkId) { entry = interceptQueue[i]; break; }
+  }
+  renderInterceptQueue();
+  if (!entry) return;
+  var methodEl = document.getElementById("intercept-method");
+  var urlEl = document.getElementById("intercept-url");
+  var hdrEl = document.getElementById("intercept-headers");
+  var bodyEl = document.getElementById("intercept-body");
+  if (methodEl) methodEl.value = entry.method || "GET";
+  if (urlEl) urlEl.value = entry.url || "";
+  if (hdrEl) {
+    var h = entry.headers || {};
+    hdrEl.value = Object.keys(h).map(function(k) { return k + ": " + h[k]; }).join("\n");
+  }
+  if (bodyEl) bodyEl.value = entry.body || "";
+}
+
+function clearInterceptEditor() {
+  interceptSelectedId = null;
+  var urlEl = document.getElementById("intercept-url");
+  var hdrEl = document.getElementById("intercept-headers");
+  var bodyEl = document.getElementById("intercept-body");
+  if (urlEl) urlEl.value = "";
+  if (hdrEl) hdrEl.value = "";
+  if (bodyEl) bodyEl.value = "";
+}
+
+function onInterceptState(msg) {
+  if (msg.error) setStatus("Intercept: " + msg.error);
+  setInterceptButtons(!!msg.active);
+  var help = document.getElementById("intercept-help");
+  var modeEl = document.getElementById("intercept-mode-badge");
+  if (!msg.active) {
+    interceptQueue = [];
+    clearInterceptEditor();
+    renderInterceptQueue();
+    if (modeEl) modeEl.textContent = "";
+  } else {
+    if (typeof msg.queueSize === "number") updateInterceptQueueCount(msg.queueSize);
+    if (modeEl) {
+      modeEl.textContent = msg.mode === "page" ? "MODE: PAGE HOOK (fetch/XHR)" : "MODE: DEBUGGER (full HTTP)";
+      modeEl.style.color = msg.mode === "page" ? "var(--amber)" : "var(--green)";
+    }
+    setStatus(msg.message || ("Intercept ON · " + (msg.mode || "") + " · tab " + msg.tabId));
+  }
+  if (help && msg.active && msg.mode === "page") {
+    help.textContent = "Page-hook mode: intercepts fetch() and XHR from the page (works with DevTools open). Reload the target tab once after enabling for full coverage. Keyboard: F = Forward, D = Drop.";
+  } else if (help && msg.active) {
+    help.textContent = "Debugger mode: holds all HTTP (banner may show). Forward/Drop from the queue. Keyboard: F = Forward, D = Drop. Optional response stage holds responses too.";
+  }
+}
+
+function onInterceptPaused(msg) {
+  if (!msg || !msg.request) return;
+  // de-dupe by networkId
+  interceptQueue = interceptQueue.filter(function(e) {
+    return e.networkId !== msg.request.networkId;
+  });
+  interceptQueue.push(msg.request);
+  if (interceptQueue.length > 40) interceptQueue.shift();
+  renderInterceptQueue();
+  if (!interceptSelectedId) selectInterceptEntry(msg.request.networkId);
+  setStatus("Intercepted " + (msg.request.method || "") + " " + (msg.request.url || "").slice(0, 60));
+  // Optional: auto-open intercept tab
+  var badge = document.querySelector('[data-tab="intercept"]');
+  if (badge) badge.classList.add("has-queue");
+}
+
+function onInterceptReleased(msg) {
+  if (!msg || !msg.networkId) return;
+  interceptQueue = interceptQueue.filter(function(e) { return e.networkId !== msg.networkId; });
+  if (interceptSelectedId === msg.networkId) {
+    clearInterceptEditor();
+    if (interceptQueue.length) selectInterceptEntry(interceptQueue[0].networkId);
+  }
+  renderInterceptQueue();
+  if (typeof msg.queueSize === "number") updateInterceptQueueCount(msg.queueSize);
+  var badge = document.querySelector('[data-tab="intercept"]');
+  if (badge && !interceptQueue.length) badge.classList.remove("has-queue");
+}
+
+function toggleIntercept() {
+  if (interceptActive) {
+    sendBg({ type: "INTERCEPT_STOP" });
+    setStatus("Intercept stopping…");
+    return;
+  }
+  var tabId = getInterceptTargetTabId();
+  if (tabId == null) {
+    setStatus(IS_STANDALONE
+      ? "⚠ Select a specific TARGET TAB (not All Tabs) before enabling intercept"
+      : "⚠ No inspected tab available");
+    switchTab("intercept");
+    return;
+  }
+  var scopeOnly = !!(document.getElementById("intercept-scope-only") || {}).checked;
+  var stageResponse = !!(document.getElementById("intercept-stage-response") || {}).checked;
+  // DevTools already holds the debugger → prefer page-hook (fetch/XHR)
+  var preferPage = !IS_STANDALONE || !!(document.getElementById("intercept-prefer-page") || {}).checked;
+  var domains = [];
+  if (window.PhantomFeatures && PhantomFeatures.scopeState && Array.isArray(PhantomFeatures.scopeState.domains)) {
+    domains = PhantomFeatures.scopeState.domains.slice();
+  }
+  setStatus("Starting intercept on tab " + tabId + "…");
+  sendBg({
+    type: "INTERCEPT_START",
+    tabId: tabId,
+    scopeOnly: scopeOnly,
+    stageResponse: stageResponse,
+    preferPage: preferPage,
+    domains: domains
+  });
+  switchTab("intercept");
+}
+
+function collectInterceptEdits() {
+  return {
+    networkId: interceptSelectedId,
+    method: (document.getElementById("intercept-method") || {}).value,
+    url: (document.getElementById("intercept-url") || {}).value,
+    headersText: (document.getElementById("intercept-headers") || {}).value,
+    body: (document.getElementById("intercept-body") || {}).value
+  };
+}
+
+var _btnIxTop = document.getElementById("btn-intercept");
+var _btnIxMid = document.getElementById("btn-intercept-toggle");
+if (_btnIxTop) _btnIxTop.addEventListener("click", toggleIntercept);
+if (_btnIxMid) _btnIxMid.addEventListener("click", toggleIntercept);
+
+var _btnIxFwd = document.getElementById("btn-intercept-forward");
+if (_btnIxFwd) {
+  _btnIxFwd.addEventListener("click", function() {
+    if (!interceptSelectedId) { setStatus("Select a queued request"); return; }
+    var edits = collectInterceptEdits();
+    sendBg({
+      type: "INTERCEPT_FORWARD",
+      networkId: edits.networkId,
+      method: edits.method,
+      url: edits.url,
+      headersText: edits.headersText,
+      body: edits.body
+    });
+  });
+}
+var _btnIxDrop = document.getElementById("btn-intercept-drop");
+if (_btnIxDrop) {
+  _btnIxDrop.addEventListener("click", function() {
+    if (!interceptSelectedId) { setStatus("Select a queued request"); return; }
+    sendBg({ type: "INTERCEPT_DROP", networkId: interceptSelectedId });
+  });
+}
+var _btnIxFwdAll = document.getElementById("btn-intercept-forward-all");
+if (_btnIxFwdAll) {
+  _btnIxFwdAll.addEventListener("click", function() {
+    sendBg({ type: "INTERCEPT_FORWARD_ALL" });
+  });
+}
+var _btnIxDropAll = document.getElementById("btn-intercept-drop-all");
+if (_btnIxDropAll) {
+  _btnIxDropAll.addEventListener("click", function() {
+    sendBg({ type: "INTERCEPT_DROP_ALL" });
+  });
 }
 
 // cURL import event → create repeater session
@@ -1395,7 +2025,8 @@ document.addEventListener("phantom:curl-import", function(e) {
     method:         parsed.method || "GET",
     url:            parsed.url,
     requestHeaders: parsed.headers || {},
-    requestBody:    parsed.body || null
+    requestBody:    parsed.body || null,
+    cookies:        extractCookiesFromReq({ requestHeaders: parsed.headers || {} })
   };
   createSession(fakeReq);
   switchTab("repeater");
@@ -1403,12 +2034,31 @@ document.addEventListener("phantom:curl-import", function(e) {
 
 // Keyboard shortcuts
 document.addEventListener("keydown", function(e) {
+  // Don't steal keys while typing in inputs
+  var tag = (e.target && e.target.tagName) || "";
+  var typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target && e.target.isContentEditable);
+
   // Ctrl+Enter in repeater URL field = send
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     var active = document.activeElement;
-    if (active && (active.id === "rep-url" || active.id === "rep-body" || active.id === "rep-raw")) {
+    if (active && (active.id === "rep-url" || active.id === "rep-body" || active.id === "rep-raw" ||
+        active.id === "intercept-url" || active.id === "intercept-body" || active.id === "intercept-headers")) {
       e.preventDefault();
-      doSend();
+      if (active.id.indexOf("intercept") === 0) {
+        if (_btnIxFwd) _btnIxFwd.click();
+      } else {
+        doSend();
+      }
+    }
+  }
+  // Intercept: F = forward, D = drop (when not typing)
+  if (!typing && interceptActive && interceptSelectedId) {
+    if (e.key === "f" || e.key === "F") {
+      e.preventDefault();
+      if (_btnIxFwd) _btnIxFwd.click();
+    } else if (e.key === "d" || e.key === "D") {
+      e.preventDefault();
+      if (_btnIxDrop) _btnIxDrop.click();
     }
   }
   // Ctrl+L = clear
@@ -1422,3 +2072,30 @@ document.addEventListener("keydown", function(e) {
     if (fi) { e.preventDefault(); fi.focus(); fi.select(); }
   }
 });
+
+// Repeater → Intruder
+var _btnRepFuzz = document.getElementById("btn-rep-to-fuzz");
+if (_btnRepFuzz) {
+  _btnRepFuzz.addEventListener("click", function() {
+    saveSession();
+    var s = repeaterSessions.find(function(x) { return x.id === activeSessionId; });
+    if (!s || !s.url) {
+      setStatus("Set a URL in Repeater first");
+      return;
+    }
+    var fake = {
+      method: s.method,
+      url: s.url,
+      requestHeaders: s.headers || {},
+      requestBody: s.body || null,
+      cookies: s.cookies || []
+    };
+    switchTab("tools");
+    var nav = document.querySelector('.tools-nav-btn[data-tools="intruder"]');
+    if (nav) nav.click();
+    if (window.PhantomAdvanced && PhantomAdvanced.loadIntruderFromRequest) {
+      PhantomAdvanced.loadIntruderFromRequest(fake);
+    }
+    setStatus("Repeater request loaded into Intruder — mark § positions");
+  });
+}

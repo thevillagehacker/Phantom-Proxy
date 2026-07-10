@@ -20,11 +20,17 @@
         <button class="tab-btn" data-tab="scope">
           <span class="tab-icon">◎</span> SCOPE
         </button>
+        <button class="tab-btn" data-tab="intercept">
+          <span class="tab-icon">⏸</span> INTERCEPT
+        </button>
         <button class="tab-btn active" data-tab="history">
           <span class="tab-icon">◈</span> HISTORY
         </button>
         <button class="tab-btn" data-tab="repeater">
           <span class="tab-icon">⟳</span> REPEATER
+        </button>
+        <button class="tab-btn" data-tab="tools">
+          <span class="tab-icon">⬡</span> TOOLS
         </button>
         <button class="tab-btn" data-tab="decoder">
           <span class="tab-icon">⌥</span> DECODER
@@ -37,21 +43,26 @@
           <span id="capture-label">CAPTURING</span>
         </div>
         <span id="scope-badge" class="scope-badge">SCOPE: OFF</span>
-        <button class="ctrl-btn" id="btn-export-har" title="Export as HAR">⬇ EXPORT</button>
-        <button class="ctrl-btn" id="btn-import-har" title="Import HAR file">⬆ IMPORT</button>
+        <button class="ctrl-btn" id="btn-export-har" title="Export as HAR">⬇ HAR</button>
+        <button class="ctrl-btn" id="btn-import-har" title="Import HAR file">⬆ HAR</button>
         <input type="file" id="import-har-input" accept=".har,.json" style="display:none" />
+        <button class="ctrl-btn" id="btn-export-project" title="Export full project">⬇ PROJECT</button>
+        <button class="ctrl-btn" id="btn-import-project" title="Import project">⬆ PROJECT</button>
+        <input type="file" id="project-import-input" accept=".json,application/json" style="display:none" />
         <button class="ctrl-btn" id="btn-clear" title="Clear all requests">⌫ CLEAR</button>
         <button class="ctrl-btn" id="btn-pause" title="Pause capture">⏸ PAUSE</button>
+        <button class="ctrl-btn intercept-toggle" id="btn-intercept" title="Proxy intercept (hold requests)">◎ INTERCEPT OFF</button>
       </div>
     </header>
 
-    <!-- ═══ STANDALONE TAB SELECTOR (shown only in popup window mode) ═══ -->
+    <!-- ═══ STANDALONE TARGET TAB (filters History by browser tab — complementary to Scope domains) ═══ -->
     <div class="tab-selector-bar hidden" id="standalone-tab-bar">
-      <span class="tab-selector-label">MONITORING TAB</span>
-      <select id="tab-target-select">
+      <span class="tab-selector-label">TARGET TAB</span>
+      <select id="tab-target-select" class="cyber-select">
         <option value="all">⬡ All Tabs</option>
       </select>
       <button id="btn-refresh-tabs" title="Refresh tab list">⟳</button>
+      <span class="tab-selector-hint">Filters which browser tab’s traffic appears in History. Scope (domains) is separate — use both together.</span>
       <span class="standalone-badge">◈ STANDALONE MODE</span>
     </div>
 
@@ -167,6 +178,9 @@
               <div id="detail-actions">
                 <button class="action-btn" id="btn-send-repeater">⟳ SEND TO REPEATER</button>
                 <button class="action-btn secondary" id="btn-copy-curl">⎘ COPY AS CURL</button>
+                <button class="action-btn secondary" id="btn-send-fuzzer" title="Send to Intruder">⚡ FUZZ</button>
+                <button class="action-btn secondary" id="btn-cmp-a" title="Set as Compare A">CMP A</button>
+                <button class="action-btn secondary" id="btn-cmp-b" title="Set as Compare B">CMP B</button>
               </div>
             </div>
 
@@ -175,6 +189,13 @@
               <span class="meta-pill" id="meta-duration"></span>
               <span class="meta-pill" id="meta-size"></span>
               <span class="meta-pill" id="meta-type"></span>
+            </div>
+
+            <div id="detail-notes-bar">
+              <input type="hidden" id="note-request-id" value="" />
+              <input type="text" id="note-tags" placeholder="tags (comma-separated)" spellcheck="false" maxlength="200" />
+              <input type="text" id="note-text" placeholder="request note…" spellcheck="false" maxlength="2000" />
+              <button class="ctrl-btn small" id="btn-note-save">SAVE NOTE</button>
             </div>
 
             <div id="detail-tabs">
@@ -249,11 +270,13 @@
                 </select>
                 <input type="text" id="rep-url" placeholder="https://target.com/api/endpoint" spellcheck="false" />
                 <button id="btn-send-req" class="send-btn">▶ SEND</button>
+                <button id="btn-rep-to-fuzz" class="ctrl-btn" title="Send this request to Intruder">⚡ FUZZ</button>
               </div>
             </div>
 
             <div id="rep-editor-tabs">
               <button class="rep-etab active" data-etab="rep-headers-editor">HEADERS</button>
+              <button class="rep-etab" data-etab="rep-cookies-editor">COOKIES</button>
               <button class="rep-etab" data-etab="rep-body-editor">BODY</button>
               <button class="rep-etab" data-etab="rep-raw-editor">RAW HTTP</button>
             </div>
@@ -264,6 +287,20 @@
                   <!-- dynamic rows -->
                 </div>
                 <button id="btn-add-header" class="ctrl-btn small">+ ADD HEADER</button>
+              </div>
+            </div>
+
+            <div id="rep-etab-rep-cookies-editor" class="rep-etab-pane hidden">
+              <div id="cookies-editor-container">
+                <div class="cookies-toolbar">
+                  <span class="filter-label">COOKIE PAIRS</span>
+                  <button id="btn-load-browser-cookies" class="ctrl-btn small" title="Load cookies from the browser jar for this URL">⬇ LOAD BROWSER COOKIES</button>
+                  <button id="btn-add-cookie" class="ctrl-btn small">+ ADD COOKIE</button>
+                </div>
+                <div id="cookies-editor-rows">
+                  <!-- dynamic name=value rows -->
+                </div>
+                <p class="cookies-hint">Cookies are sent as the <code>Cookie</code> header. Edit values here or paste a full cookie string with <strong>+ ADD COOKIE</strong> rows. Use <strong>LOAD BROWSER COOKIES</strong> to pull the live jar for the request URL.</p>
               </div>
             </div>
 
@@ -296,6 +333,8 @@
                 <span class="meta-pill" id="rep-meta-status"></span>
                 <span class="meta-pill" id="rep-meta-duration"></span>
                 <span class="meta-pill" id="rep-meta-size"></span>
+                <button class="ctrl-btn small" id="btn-diff-store-a" title="Store response as Compare A">CMP A</button>
+                <button class="ctrl-btn small" id="btn-diff-store-b" title="Store response as Compare B">CMP B</button>
               </div>
             </div>
 
@@ -322,6 +361,495 @@
             <div id="rep-rtab-rep-res-headers" class="rep-rtab-pane hidden">
               <div id="rep-res-headers-table" class="kv-table"></div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ TOOLS TAB ═══ -->
+    <div id="tab-tools" class="tab-pane hidden">
+      <div id="tools-container">
+        <nav class="tools-nav">
+          <button class="tools-nav-btn active" data-tools="sitemap">SITEMAP</button>
+          <button class="tools-nav-btn" data-tools="search">SEARCH</button>
+          <button class="tools-nav-btn" data-tools="compare">COMPARE</button>
+          <button class="tools-nav-btn" data-tools="matchreplace">MATCH/REPLACE</button>
+          <button class="tools-nav-btn" data-tools="intruder">INTRUDER</button>
+          <button class="tools-nav-btn" data-tools="params">PARAMS</button>
+          <button class="tools-nav-btn" data-tools="cookies">COOKIE JAR</button>
+          <button class="tools-nav-btn" data-tools="issues">ISSUES</button>
+          <button class="tools-nav-btn" data-tools="websocket">WEBSOCKET</button>
+          <button class="tools-nav-btn" data-tools="jwt">JWT EDITOR</button>
+          <button class="tools-nav-btn" data-tools="passive">PASSIVE</button>
+          <button class="tools-nav-btn" data-tools="project">PROJECT</button>
+        </nav>
+        <div class="tools-body">
+
+          <!-- SITEMAP -->
+          <div id="tools-sitemap" class="tools-pane">
+            <div class="tools-pane-header">
+              <span class="pane-title">SITE MAP</span>
+              <span id="sitemap-meta" class="tools-meta"></span>
+              <button class="ctrl-btn small" id="btn-sitemap-refresh">⟳ REFRESH</button>
+            </div>
+            <p class="tools-help">Click a path to open History. Right-click a path → <strong>Send to Intruder</strong>.</p>
+            <div id="sitemap-tree" class="adv-scroll"></div>
+          </div>
+
+          <!-- SEARCH -->
+          <div id="tools-search" class="tools-pane hidden">
+            <div class="tools-pane-header search-options-bar">
+              <span class="pane-title">GLOBAL SEARCH</span>
+              <div class="cyber-check-group">
+                <label class="chk-label"><input type="checkbox" id="search-field-url" checked /> URL</label>
+                <label class="chk-label"><input type="checkbox" id="search-field-headers" checked /> Headers</label>
+                <label class="chk-label"><input type="checkbox" id="search-field-body" checked /> Body</label>
+                <label class="chk-label"><input type="checkbox" id="search-field-res-headers" /> Res headers</label>
+                <label class="chk-label"><input type="checkbox" id="search-regex" /> Regex</label>
+              </div>
+            </div>
+            <div class="tools-input-row">
+              <input type="text" id="search-query" placeholder="Search history (headers, body, URL)…" spellcheck="false" />
+              <button class="send-btn" id="btn-search-run">SEARCH</button>
+            </div>
+            <div id="search-results" class="adv-scroll"></div>
+          </div>
+
+          <!-- UNIFIED COMPARE (History + Repeater) -->
+          <div id="tools-compare" class="tools-pane hidden">
+            <div class="tools-pane-header">
+              <span class="pane-title">COMPARE</span>
+              <button class="ctrl-btn small" id="btn-compare-run">COMPARE</button>
+              <button class="ctrl-btn small" id="btn-compare-clear">CLEAR</button>
+            </div>
+            <p class="tools-help">
+              Set sides from <strong>History</strong> (CMP A / CMP B) or <strong>Repeater</strong> (DIFF A / DIFF B on the response bar).
+              Click <strong>COMPARE</strong> for a line diff. Use <strong>CLEAR</strong> then pick new sides.
+            </p>
+            <div class="diff-labels">
+              <div><span class="filter-label">A</span> <span id="compare-label-a" class="diff-label-text">(empty)</span></div>
+              <div><span class="filter-label">B</span> <span id="compare-label-b" class="diff-label-text">(empty)</span></div>
+            </div>
+            <div id="compare-output" class="adv-scroll diff-output"></div>
+          </div>
+
+          <!-- MATCH REPLACE -->
+          <div id="tools-matchreplace" class="tools-pane hidden">
+            <div class="tools-pane-header">
+              <span class="pane-title">MATCH &amp; REPLACE</span>
+            </div>
+            <p class="tools-help">Rules apply automatically on Repeater / Intruder send. Regex is length-capped and ReDoS-guarded.</p>
+            <div class="mr-form">
+              <select id="mr-target">
+                <option value="body">Body</option>
+                <option value="headers">Headers</option>
+                <option value="url">URL</option>
+                <option value="cookie">Cookie</option>
+              </select>
+              <input type="text" id="mr-match" placeholder="Match (literal or /regex/g)" spellcheck="false" />
+              <input type="text" id="mr-replace" placeholder="Replace with" spellcheck="false" />
+              <label class="chk-label"><input type="checkbox" id="mr-regex" /> Regex</label>
+              <button class="send-btn" id="btn-mr-add">+ ADD RULE</button>
+            </div>
+            <div id="mr-rules-list" class="adv-scroll"></div>
+          </div>
+
+          <!-- INTRUDER -->
+          <div id="tools-intruder" class="tools-pane hidden">
+            <div class="tools-pane-header fuzz-toolbar">
+              <span class="pane-title">INTRUDER</span>
+              <div class="cyber-field">
+                <span class="cyber-field-label">MODE</span>
+                <select id="fuzz-attack-mode" class="cyber-select" title="Attack type">
+                  <option value="sniper">Sniper (all § → same payload)</option>
+                  <option value="pitchfork">Pitchfork (parallel lists)</option>
+                  <option value="cluster">Cluster bomb (cartesian)</option>
+                </select>
+              </div>
+              <div class="cyber-field">
+                <span class="cyber-field-label">DELAY</span>
+                <div class="cyber-num-wrap">
+                  <input type="number" id="fuzz-delay" class="cyber-num" value="150" min="50" max="5000" step="50" />
+                  <span class="cyber-num-unit">ms</span>
+                </div>
+              </div>
+              <button class="ctrl-btn small" id="btn-fuzz-marker" title="Wrap selection in focused field with § §">INSERT § §</button>
+              <button class="ctrl-btn small" id="btn-fuzz-clear-results">CLEAR RESULTS</button>
+              <button class="send-btn" id="btn-fuzz-run">▶ START ATTACK</button>
+            </div>
+            <p class="tools-help">Mark injection points with <strong>§value§</strong> in the <strong>URL</strong>, any <strong>header</strong> line, or the <strong>body</strong>. Click a result to inspect full request + response.</p>
+            <div class="fuzz-layout">
+              <!-- Left: positions + payloads -->
+              <div class="fuzz-positions">
+                <div class="tools-input-row">
+                  <div class="cyber-field cyber-field-method">
+                    <span class="cyber-field-label">METHOD</span>
+                    <select id="fuzz-method" class="cyber-select cyber-select-method">
+                      <option>GET</option><option>POST</option><option>PUT</option>
+                      <option>PATCH</option><option>DELETE</option><option>OPTIONS</option><option>HEAD</option>
+                    </select>
+                  </div>
+                  <input type="text" id="fuzz-url" class="fuzz-field" data-fuzz-field="url" placeholder="https://target/api?q=§test§  (markers allowed)" spellcheck="false" />
+                </div>
+                <div class="filter-label">HEADERS <span class="tools-meta">one per line: Name: value — §markers§ allowed</span></div>
+                <textarea id="fuzz-headers" class="fuzz-field fuzz-headers" data-fuzz-field="headers" placeholder="Authorization: Bearer §token§&#10;Content-Type: application/json&#10;X-Custom: §inject§" spellcheck="false"></textarea>
+                <div class="filter-label">BODY <span class="tools-meta">§markers§ allowed</span></div>
+                <textarea id="fuzz-template" class="fuzz-field fuzz-body" data-fuzz-field="body" placeholder='{"user":"§admin§","pass":"§pass§"}' spellcheck="false"></textarea>
+
+                <!-- Payload set (Burp-style) -->
+                <div class="filter-label">PAYLOAD SET <span id="fuzz-payload-count" class="tools-meta">0 ready</span></div>
+                <div class="payload-type-tabs" id="payload-type-tabs">
+                  <button type="button" class="payload-type-btn active" data-ptype="simple">Simple list</button>
+                  <button type="button" class="payload-type-btn" data-ptype="numbers">Numbers</button>
+                  <button type="button" class="payload-type-btn" data-ptype="wordlist">Wordlist</button>
+                  <button type="button" class="payload-type-btn" data-ptype="bruteforce">Brute / charset</button>
+                  <button type="button" class="payload-type-btn" data-ptype="null">Null</button>
+                  <button type="button" class="payload-type-btn" data-ptype="dates">Dates</button>
+                  <button type="button" class="payload-type-btn" data-ptype="runtime">Runtime file</button>
+                </div>
+
+                <div class="payload-panels">
+                  <!-- Simple list -->
+                  <div id="ptype-simple" class="payload-panel">
+                    <textarea id="fuzz-payloads" class="fuzz-payloads" placeholder="Set 1 — one payload per line&#10;admin&#10;true&#10;' OR 1=1--" spellcheck="false"></textarea>
+                    <div class="filter-label">SET 2 <span class="tools-meta">pitchfork / cluster · 2nd § position</span></div>
+                    <textarea id="fuzz-payloads-2" class="fuzz-payloads" placeholder="Second list…" spellcheck="false"></textarea>
+                    <div class="filter-label">SET 3 <span class="tools-meta">optional 3rd § position</span></div>
+                    <textarea id="fuzz-payloads-3" class="fuzz-payloads" placeholder="Third list (optional)…" spellcheck="false"></textarea>
+                  </div>
+
+                  <!-- Numbers from–to -->
+                  <div id="ptype-numbers" class="payload-panel hidden">
+                    <div class="payload-form-grid">
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">FROM</span>
+                        <input type="number" id="fuzz-num-from" class="cyber-num wide" value="1" />
+                      </div>
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">TO</span>
+                        <input type="number" id="fuzz-num-to" class="cyber-num wide" value="100" />
+                      </div>
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">STEP</span>
+                        <input type="number" id="fuzz-num-step" class="cyber-num wide" value="1" />
+                      </div>
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">BASE</span>
+                        <select id="fuzz-num-base" class="cyber-select">
+                          <option value="10">Decimal</option>
+                          <option value="16">Hex</option>
+                          <option value="8">Octal</option>
+                          <option value="2">Binary</option>
+                        </select>
+                      </div>
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">MIN DIGITS</span>
+                        <input type="number" id="fuzz-num-pad" class="cyber-num wide" value="0" min="0" max="16" title="Zero-pad to this width (0 = none)" />
+                      </div>
+                    </div>
+                    <button type="button" class="ctrl-btn small" id="btn-fuzz-gen-numbers">⚡ GENERATE INTO PREVIEW</button>
+                  </div>
+
+                  <!-- Wordlist file -->
+                  <div id="ptype-wordlist" class="payload-panel hidden">
+                    <div class="wordlist-row">
+                      <button type="button" class="ctrl-btn" id="btn-fuzz-wordlist">⬆ LOAD WORDLIST FILE</button>
+                      <input type="file" id="fuzz-wordlist-input" accept=".txt,.lst,.dic,text/plain" style="display:none" />
+                      <span id="fuzz-wordlist-name" class="tools-meta">No file loaded</span>
+                    </div>
+                    <p class="tools-help">Local text file only — never uploaded. One payload per line. Max file 2MB; first 500 lines used.</p>
+                    <textarea id="fuzz-wordlist-preview" class="fuzz-payloads" readonly placeholder="Wordlist lines appear here after load…" spellcheck="false"></textarea>
+                  </div>
+
+                  <!-- Character brute force -->
+                  <div id="ptype-bruteforce" class="payload-panel hidden">
+                    <div class="payload-form-grid">
+                      <div class="cyber-field cyber-field-span2">
+                        <span class="cyber-field-label">CHARSET PRESET</span>
+                        <select id="fuzz-brute-preset" class="cyber-select">
+                          <option value="digits">0-9 (digits)</option>
+                          <option value="lower">a-z (lowercase)</option>
+                          <option value="upper">A-Z (uppercase)</option>
+                          <option value="alpha">a-zA-Z</option>
+                          <option value="alnum">a-zA-Z0-9</option>
+                          <option value="hex">0-9a-f (hex)</option>
+                          <option value="custom">Custom charset…</option>
+                        </select>
+                      </div>
+                      <div class="cyber-field cyber-field-span2">
+                        <span class="cyber-field-label">CUSTOM CHARS</span>
+                        <input type="text" id="fuzz-brute-custom" class="cyber-text" placeholder="abc123!@" spellcheck="false" disabled />
+                      </div>
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">MIN LEN</span>
+                        <input type="number" id="fuzz-brute-min" class="cyber-num wide" value="1" min="1" max="4" />
+                      </div>
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">MAX LEN</span>
+                        <input type="number" id="fuzz-brute-max" class="cyber-num wide" value="2" min="1" max="4" />
+                      </div>
+                    </div>
+                    <p class="tools-help">Combinations are capped for safety (max length 4, total payloads capped). Prefer short charsets.</p>
+                    <button type="button" class="ctrl-btn small" id="btn-fuzz-gen-brute">⚡ GENERATE INTO PREVIEW</button>
+                  </div>
+
+                  <!-- Null payloads -->
+                  <div id="ptype-null" class="payload-panel hidden">
+                    <div class="payload-form-grid">
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">COUNT</span>
+                        <input type="number" id="fuzz-null-count" class="cyber-num wide" value="1" min="1" max="500" />
+                      </div>
+                    </div>
+                    <p class="tools-help">Sends empty-string payloads (useful for testing missing params / optional fields).</p>
+                  </div>
+
+                  <!-- Dates -->
+                  <div id="ptype-dates" class="payload-panel hidden">
+                    <div class="payload-form-grid">
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">FROM</span>
+                        <input type="date" id="fuzz-date-from" class="cyber-text" />
+                      </div>
+                      <div class="cyber-field">
+                        <span class="cyber-field-label">TO</span>
+                        <input type="date" id="fuzz-date-to" class="cyber-text" />
+                      </div>
+                      <div class="cyber-field cyber-field-span2">
+                        <span class="cyber-field-label">FORMAT</span>
+                        <select id="fuzz-date-format" class="cyber-select">
+                          <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                          <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                          <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                          <option value="YYYYMMDD">YYYYMMDD</option>
+                          <option value="unix">Unix timestamp (s)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <button type="button" class="ctrl-btn small" id="btn-fuzz-gen-dates">⚡ GENERATE INTO PREVIEW</button>
+                  </div>
+
+                  <!-- Runtime file = same as wordlist but re-read each attack (alias UI) -->
+                  <div id="ptype-runtime" class="payload-panel hidden">
+                    <div class="wordlist-row">
+                      <button type="button" class="ctrl-btn" id="btn-fuzz-runtime">⬆ SELECT FILE</button>
+                      <input type="file" id="fuzz-runtime-input" accept=".txt,.lst,.dic,text/plain" style="display:none" />
+                      <span id="fuzz-runtime-name" class="tools-meta">No file selected</span>
+                    </div>
+                    <p class="tools-help">Like Burp “Runtime file”: payloads are read from the selected local file when you start the attack (refreshes if the file changed on disk between loads — re-select to refresh).</p>
+                    <textarea id="fuzz-runtime-preview" class="fuzz-payloads" readonly placeholder="File contents preview…" spellcheck="false"></textarea>
+                  </div>
+                </div>
+
+                <!-- Shared processors + live preview -->
+                <div class="payload-processors">
+                  <span class="filter-label">PROCESS</span>
+                  <label class="chk-label"><input type="checkbox" id="fuzz-proc-url" /> URL-encode</label>
+                  <label class="chk-label"><input type="checkbox" id="fuzz-proc-b64" /> Base64</label>
+                  <label class="chk-label"><input type="checkbox" id="fuzz-proc-dblurl" /> Double URL</label>
+                  <input type="text" id="fuzz-proc-prefix" class="cyber-text tiny" placeholder="prefix" spellcheck="false" maxlength="64" />
+                  <input type="text" id="fuzz-proc-suffix" class="cyber-text tiny" placeholder="suffix" spellcheck="false" maxlength="64" />
+                  <button type="button" class="ctrl-btn small" id="btn-fuzz-preview-payloads">PREVIEW</button>
+                </div>
+                <textarea id="fuzz-payload-preview" class="fuzz-payload-preview" readonly placeholder="Resolved payload preview (after generate / process)…" spellcheck="false"></textarea>
+              </div>
+              <!-- Right: results table + detail -->
+              <div class="fuzz-results-pane">
+                <div class="tools-input-row" style="padding:6px 8px;border-bottom:1px solid var(--border)">
+                  <input type="text" id="fuzz-grep" class="cyber-text" placeholder="Grep results (regex or text)…" spellcheck="false" />
+                  <label class="chk-label"><input type="checkbox" id="fuzz-grep-regex" /> Regex</label>
+                  <button type="button" class="ctrl-btn small" id="btn-fuzz-grep">GREP</button>
+                  <span id="fuzz-grep-meta" class="tools-meta"></span>
+                </div>
+                <div class="fuzz-results-header">
+                  <span>#</span><span>PAYLOAD</span><span>STATUS</span><span>LEN</span><span>TIME</span>
+                </div>
+                <div id="fuzz-results" class="adv-scroll fuzz-results-list"></div>
+                <div class="fuzz-detail" id="fuzz-detail">
+                  <div class="fuzz-detail-tabs">
+                    <button type="button" class="fuzz-dtab active" data-fdtab="req">REQUEST</button>
+                    <button type="button" class="fuzz-dtab" data-fdtab="res">RESPONSE</button>
+                    <button type="button" class="fuzz-dtab" data-fdtab="resh">RES HEADERS</button>
+                    <span id="fuzz-detail-meta" class="tools-meta"></span>
+                    <button type="button" class="ctrl-btn small" id="btn-fuzz-to-repeater" title="Send this request to Repeater">→ REPEATER</button>
+                    <button type="button" class="ctrl-btn small" id="btn-fuzz-copy-req">⎘ REQ</button>
+                    <button type="button" class="ctrl-btn small" id="btn-fuzz-copy-res">⎘ RES</button>
+                  </div>
+                  <pre id="fuzz-detail-req" class="fuzz-detail-body code-block">Select a result row to view the request and response</pre>
+                  <pre id="fuzz-detail-res" class="fuzz-detail-body code-block hidden"></pre>
+                  <pre id="fuzz-detail-resh" class="fuzz-detail-body code-block hidden"></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PARAMS -->
+          <div id="tools-params" class="tools-pane hidden">
+            <div class="tools-pane-header">
+              <span class="pane-title">PARAMETER MINER</span>
+              <span id="params-meta" class="tools-meta"></span>
+              <div class="cyber-field params-filter-field">
+                <span class="cyber-field-label">FILTER</span>
+                <input type="text" id="params-filter" class="cyber-text params-filter-input" placeholder="name, location, sample…" spellcheck="false" />
+              </div>
+              <button class="ctrl-btn small" id="btn-params-refresh">⟳ REFRESH</button>
+              <button class="ctrl-btn small" id="btn-params-to-wordlist" title="Export values as wordlist into Intruder">→ WORDLIST</button>
+            </div>
+            <div id="params-list" class="adv-scroll"></div>
+          </div>
+
+          <!-- COOKIE JAR -->
+          <div id="tools-cookies" class="tools-pane hidden">
+            <div class="tools-pane-header">
+              <span class="pane-title">COOKIE JAR</span>
+              <input type="text" id="cookie-jar-url" class="cyber-text" placeholder="https://target.com" spellcheck="false" style="max-width:280px" />
+              <button class="ctrl-btn small" id="btn-cookie-jar-load">⬇ LOAD</button>
+              <button class="ctrl-btn small" id="btn-cookie-jar-export">⎘ COPY</button>
+            </div>
+            <p class="tools-help">View browser cookies for a URL (via chrome.cookies). Edit in Repeater COOKIES tab to send overrides.</p>
+            <div id="cookie-jar-list" class="adv-scroll"></div>
+          </div>
+
+          <!-- ISSUES BOARD -->
+          <div id="tools-issues" class="tools-pane hidden">
+            <div class="tools-pane-header">
+              <span class="pane-title">ISSUE BOARD</span>
+              <button class="send-btn" id="btn-issues-scan">⟳ SCAN HISTORY</button>
+              <button class="ctrl-btn small" id="btn-issues-clear">CLEAR</button>
+            </div>
+            <p class="tools-help">Persistent local board of passive findings. Click a row to open the related request in History.</p>
+            <div id="issues-list" class="adv-scroll"></div>
+          </div>
+
+          <!-- WEBSOCKET -->
+          <div id="tools-websocket" class="tools-pane hidden">
+            <div class="tools-pane-header">
+              <span class="pane-title">WEBSOCKET CLIENT</span>
+              <span id="ws-status" class="tools-meta">CLOSED</span>
+              <button class="ctrl-btn small" id="btn-ws-refresh-hist">HISTORY</button>
+              <button class="ctrl-btn small" id="btn-ws-connect">CONNECT</button>
+              <button class="ctrl-btn small" id="btn-ws-disconnect">DISCONNECT</button>
+            </div>
+            <div class="tools-input-row">
+              <input type="text" id="ws-url" placeholder="wss://target.example/socket" spellcheck="false" />
+            </div>
+            <div class="ws-layout">
+              <div class="ws-left">
+                <div class="filter-label">HANDSHAKES FROM HISTORY</div>
+                <div id="ws-history-list" class="adv-scroll"></div>
+              </div>
+              <div class="ws-right">
+                <div id="ws-log" class="adv-scroll ws-log"></div>
+                <div class="tools-input-row">
+                  <input type="text" id="ws-message" placeholder="Message to send…" spellcheck="false" />
+                  <button class="send-btn" id="btn-ws-send">SEND</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- JWT EDITOR -->
+          <div id="tools-jwt" class="tools-pane hidden">
+            <div class="tools-pane-header">
+              <span class="pane-title">JWT EDITOR</span>
+              <button class="ctrl-btn small" id="btn-jwt-load">LOAD</button>
+              <button class="ctrl-btn small" id="btn-jwt-rebuild">REBUILD / SIGN</button>
+              <button class="ctrl-btn small" id="btn-jwt-copy">COPY</button>
+            </div>
+            <p class="tools-help">Edit claims, set <code>alg:none</code>, or re-sign with HS256 secret. Signature is never verified against a server — local only.</p>
+            <input type="text" id="jwt-edit-input" class="jwt-full-input" placeholder="Paste JWT here…" spellcheck="false" />
+            <div id="jwt-edit-warning" class="jwt-edit-warning"></div>
+            <div class="jwt-edit-grid">
+              <div>
+                <div class="filter-label">HEADER</div>
+                <textarea id="jwt-edit-header" class="jwt-ta"></textarea>
+              </div>
+              <div>
+                <div class="filter-label">PAYLOAD</div>
+                <textarea id="jwt-edit-payload" class="jwt-ta"></textarea>
+              </div>
+              <div>
+                <div class="filter-label">SIGNATURE</div>
+                <textarea id="jwt-edit-sig" class="jwt-ta"></textarea>
+                <div class="filter-label" style="margin-top:8px">HS256 SECRET (optional)</div>
+                <input type="password" id="jwt-edit-secret" placeholder="secret for re-sign" spellcheck="false" autocomplete="off" />
+              </div>
+            </div>
+            <div class="filter-label">OUTPUT</div>
+            <textarea id="jwt-edit-output" class="jwt-ta" readonly placeholder="Rebuilt token…"></textarea>
+          </div>
+
+          <!-- PASSIVE -->
+          <div id="tools-passive" class="tools-pane hidden">
+            <div class="tools-pane-header">
+              <span class="pane-title">PASSIVE CHECKS</span>
+              <button class="send-btn" id="btn-passive-run">RUN</button>
+            </div>
+            <p class="tools-help">Local heuristics only — missing security headers, CORS misconfig hints, redirect patterns. Not an active scanner.</p>
+            <div id="passive-results" class="adv-scroll"></div>
+          </div>
+
+          <!-- PROJECT -->
+          <div id="tools-project" class="tools-pane hidden">
+            <div class="tools-pane-header">
+              <span class="pane-title">PROJECT SAVE / LOAD</span>
+            </div>
+            <p class="tools-help">Export history, scope, notes, bookmarks, and match/replace rules as one JSON file. Size-capped; stays local.</p>
+            <div class="project-actions">
+              <button class="send-btn" id="btn-project-export">⬇ EXPORT PROJECT</button>
+              <button class="ctrl-btn" id="btn-project-import">⬆ IMPORT PROJECT</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ INTERCEPT TAB ═══ -->
+    <div id="tab-intercept" class="tab-pane hidden">
+      <div id="intercept-container">
+        <div class="intercept-header">
+          <div class="intercept-header-left">
+            <span class="pane-title">PROXY INTERCEPT</span>
+            <button id="btn-intercept-toggle" class="scope-toggle-btn">INTERCEPT OFF</button>
+            <span id="intercept-mode-badge" class="tools-meta"></span>
+            <label class="chk-label"><input type="checkbox" id="intercept-scope-only" /> In-scope only</label>
+            <label class="chk-label"><input type="checkbox" id="intercept-stage-response" /> + Responses</label>
+            <label class="chk-label"><input type="checkbox" id="intercept-prefer-page" /> Prefer page hook</label>
+          </div>
+          <div class="intercept-header-right">
+            <span id="intercept-status" class="tools-meta">Idle</span>
+            <button class="ctrl-btn small" id="btn-intercept-forward" title="Keyboard: F">▶ FORWARD</button>
+            <button class="ctrl-btn small" id="btn-intercept-forward-all">⏩ FORWARD ALL</button>
+            <button class="ctrl-btn small" id="btn-intercept-drop" title="Keyboard: D">✕ DROP</button>
+            <button class="ctrl-btn small" id="btn-intercept-drop-all">⌫ DROP ALL</button>
+          </div>
+        </div>
+        <p class="tools-help" id="intercept-help">
+          Holds live requests for edit → forward/drop. <strong>Standalone:</strong> pick a Target Tab, then INTERCEPT ON (debugger mode, full HTTP).
+          <strong>DevTools panel:</strong> uses page-hook fallback (fetch/XHR) because DevTools already owns the debugger — reload the page after enabling.
+          Keys: <strong>F</strong> forward · <strong>D</strong> drop.
+        </p>
+        <div class="intercept-layout">
+          <div class="intercept-queue-pane">
+            <div class="filter-label">QUEUE <span id="intercept-queue-count" class="tools-meta">0</span></div>
+            <div id="intercept-queue" class="adv-scroll"></div>
+          </div>
+          <div class="intercept-editor-pane">
+            <div class="tools-input-row">
+              <div class="cyber-field cyber-field-method">
+                <span class="cyber-field-label">METHOD</span>
+                <select id="intercept-method" class="cyber-select cyber-select-method">
+                  <option>GET</option><option>POST</option><option>PUT</option>
+                  <option>PATCH</option><option>DELETE</option><option>OPTIONS</option><option>HEAD</option>
+                </select>
+              </div>
+              <input type="text" id="intercept-url" class="fuzz-field" placeholder="Paused request URL…" spellcheck="false" />
+            </div>
+            <div class="filter-label">HEADERS</div>
+            <textarea id="intercept-headers" class="intercept-headers" placeholder="Name: value" spellcheck="false"></textarea>
+            <div class="filter-label">BODY</div>
+            <textarea id="intercept-body" class="intercept-body" placeholder="(optional body)" spellcheck="false"></textarea>
           </div>
         </div>
       </div>
@@ -404,7 +932,7 @@
 
         <div class="scope-input-row">
           <span class="filter-label">ADD DOMAIN</span>
-          <input type="text" id="scope-input" placeholder="example.com or *.example.com or paste full URL" spellcheck="false" />
+          <input type="text" id="scope-input" placeholder="example.com · *.example.com · example.com/api/* · /api\d+\.target\.com/i" spellcheck="false" />
           <button id="btn-scope-add" class="send-btn">+ ADD</button>
         </div>
 
@@ -416,7 +944,9 @@
           <span class="legend-title">HOW SCOPE WORKS</span>
           <div class="legend-row"><span class="legend-dot in"></span><span>In scope — shown normally</span></div>
           <div class="legend-row"><span class="legend-dot out"></span><span>Out of scope — dimmed (DIM mode) or hidden (HIDE mode)</span></div>
-          <div class="legend-row"><span class="legend-dot wild"></span><span>Wildcard support: *.example.com matches all subdomains</span></div>
+          <div class="legend-row"><span class="legend-dot wild"></span><span>Wildcard: *.example.com or api-*.cdn.com (* = any chars)</span></div>
+          <div class="legend-row"><span class="legend-dot wild"></span><span>Path: example.com/api/* — match host + path</span></div>
+          <div class="legend-row"><span class="legend-dot wild"></span><span>Regex: /pattern/i — full JS regex against host or URL</span></div>
         </div>
 
       </div>
@@ -425,12 +955,14 @@
     <!-- ═══ STATUS BAR ═══ -->
     <footer id="statusbar">
       <span id="status-msg">PhantomProxy ready</span>
-      <span id="status-version">v2.0.1</span>
+      <span id="status-version">v2.3.0</span>
     </footer>
 
   </div>
 
+  <script src="security.js"></script>
   <script src="features.js"></script>
+  <script src="advanced.js"></script>
   <script src="panel.js"></script>
 </body>
 </html>

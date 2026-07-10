@@ -1,4 +1,4 @@
-// PhantomProxy v2.0.1 — Features Module
+// PhantomProxy v2.2.0 — Features Module
 // Scope Control | Auto-highlight | HAR Export/Import | cURL Import
 // Designed as a self-contained module that hooks into panel.js state
 "use strict";
@@ -17,9 +17,9 @@ var HIGHLIGHT_RULES = [
     color: "#b44fff",
     priority: 10,
     test: function(req) {
+      // Only flag actual JWT-shaped tokens — not every Authorization header
       var all = JSON.stringify(req.requestHeaders || {});
-      return /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(all) ||
-             /authorization/i.test(all);
+      return /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*/.test(all);
     }
   },
   {
@@ -163,12 +163,19 @@ function makeHighlightBadge(rule) {
 // SCOPE ENGINE
 // Domains can be IN scope (captured+shown) or OUT of scope
 // (captured but dimmed/hidden based on mode)
+//
+// Pattern syntax (per entry):
+//   example.com          → host + all subdomains
+//   *.example.com        → wildcards (* = any chars in host)
+//   api-*.cdn.com        → mid-string wildcards
+//   example.com/api/*    → host + path wildcard (matched on URL)
+//   /regex/i             → full JS regex against host or full URL
 // ═══════════════════════════════════════════════════════
 
 var scopeState = {
   enabled:  false,
   mode:     "dim",     // "dim" = show but grey out | "hide" = remove from list
-  domains:  [],        // array of strings — hostname patterns (supports * wildcard)
+  domains:  [],        // array of strings — hostname / path / regex patterns
   _cache:   {}
 };
 
@@ -178,6 +185,9 @@ function scopeInit() {
     if (data.phantomScope) {
       Object.assign(scopeState, data.phantomScope);
       scopeState._cache = {};
+      // Guard against corrupted storage shapes
+      if (!Array.isArray(scopeState.domains)) scopeState.domains = [];
+      if (scopeState.mode !== "hide") scopeState.mode = "dim";
       renderScopeList();
       updateScopeUI();
     }
@@ -193,27 +203,176 @@ function scopeSave() {
   }});
 }
 
-function scopeMatch(url) {
-  if (!scopeState.enabled || !scopeState.domains.length) return true;
-  if (scopeState._cache[url] !== undefined) return scopeState._cache[url];
-  var host;
-  try { host = new URL(url).hostname.toLowerCase(); } catch(e) { return true; }
-  var match = scopeState.domains.some(function(pattern) {
-    pattern = pattern.toLowerCase().trim();
-    if (!pattern) return false;
-    if (pattern.startsWith("*.")) {
-      var suffix = pattern.slice(2);
-      return host === suffix || host.endsWith("." + suffix);
+/**
+ * Escape a string for use inside a RegExp, then turn * into .*
+ */
+function wildcardToRegexSource(pattern) {
+  return pattern
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*");
+}
+
+/**
+ * Test a single scope pattern against a URL.
+ * Returns true on match. Never throws.
+ */
+function matchScopePattern(rawPattern, host, fullUrl) {
+  if (!rawPattern || typeof rawPattern !== "string") return false;
+  var pattern = rawPattern.trim();
+  if (!pattern) return false;
+  // ReDoS / abuse caps
+  if (pattern.length > 200) return false;
+
+  // ── Explicit regex: /pattern/flags ──
+  if (pattern.charAt(0) === "/") {
+    var lastSlash = pattern.lastIndexOf("/");
+    if (lastSlash > 0) {
+      var body  = pattern.slice(1, lastSlash);
+      var flags = pattern.slice(lastSlash + 1) || "i";
+      // Prefer shared safeRegExp when available
+      if (window.PhantomSecurity) {
+        var sr = PhantomSecurity.safeRegExp(body, flags);
+        if (!sr.ok) return false;
+        try {
+          return sr.re.test(host) || sr.re.test(fullUrl);
+        } catch (e) {
+          return false;
+        }
+      }
+      if (!/^[gimsuy]{0,6}$/.test(flags)) flags = "i";
+      if (/\([^)]*[+*{][^)]*\)[+*{]/.test(body)) return false;
+      try {
+        var re = new RegExp(body, flags);
+        return re.test(host) || re.test(fullUrl);
+      } catch (e) {
+        return false; // invalid regex → no match (don't crash UI)
+      }
     }
-    return host === pattern || host.endsWith("." + pattern);
+  }
+
+  var lower = pattern.toLowerCase();
+  var hasPath = lower.indexOf("/") >= 0;
+  var hasWild = lower.indexOf("*") >= 0;
+
+  // ── Path / URL patterns (contain /) ──
+  if (hasPath) {
+    var target = fullUrl.replace(/^https?:\/\//i, "").toLowerCase();
+    var pat    = lower.replace(/^https?:\/\//i, "");
+    if (hasWild) {
+      try {
+        return new RegExp("^" + wildcardToRegexSource(pat) + "$", "i").test(target) ||
+               new RegExp(wildcardToRegexSource(pat), "i").test(fullUrl);
+      } catch (e) {
+        return false;
+      }
+    }
+    return target.indexOf(pat) >= 0 || fullUrl.toLowerCase().indexOf(pat) >= 0;
+  }
+
+  // ── Hostname wildcards ──
+  if (hasWild) {
+    try {
+      if (new RegExp("^" + wildcardToRegexSource(lower) + "$", "i").test(host)) {
+        return true;
+      }
+      // README / Burp-style convenience: *.example.com also matches the apex
+      if (lower.indexOf("*.") === 0) {
+        var apex = lower.slice(2);
+        if (apex && host === apex) return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // ── Exact host or any subdomain ──
+  // "example.com" matches example.com and foo.example.com
+  // but not notexample.com (requires leading dot for subdomain)
+  return host === lower || host.endsWith("." + lower);
+}
+
+/**
+ * Match URL against configured domain patterns (ignores enabled flag).
+ * Used by the History "IN SCOPE ONLY" chip so it works even when
+ * the global SCOPE toggle is OFF — as documented.
+ */
+function scopeMatchDomain(url) {
+  if (!scopeState.domains.length) return true;
+  if (scopeState._cache[url] !== undefined) return scopeState._cache[url];
+
+  var host, fullUrl;
+  try {
+    var u = new URL(url);
+    host    = u.hostname.toLowerCase();
+    fullUrl = url;
+  } catch (e) {
+    scopeState._cache[url] = true;
+    return true;
+  }
+
+  var match = scopeState.domains.some(function(pattern) {
+    return matchScopePattern(pattern, host, fullUrl);
   });
   scopeState._cache[url] = match;
   return match;
 }
 
+/**
+ * Global scope filter used for DIM/HIDE mode.
+ * When scope is disabled (or empty), everything is considered in-scope.
+ */
+function scopeMatch(url) {
+  if (!scopeState.enabled || !scopeState.domains.length) return true;
+  return scopeMatchDomain(url);
+}
+
+/**
+ * Normalize user input before adding to the scope list.
+ * Preserves wildcards, path patterns, and /regex/ forms.
+ * Only extracts hostname from plain full URLs.
+ */
+function normalizeScopeInput(val) {
+  val = (val || "").trim();
+  if (!val) return "";
+
+  // Keep explicit regex as-is (case-sensitive body is intentional)
+  if (val.charAt(0) === "/" && val.lastIndexOf("/") > 0) return val;
+
+  // Keep pure wildcards / mid-wildcards (hostname only)
+  if (val.indexOf("*") >= 0 && val.indexOf("://") < 0) {
+    return val.toLowerCase();
+  }
+
+  // Path pattern without scheme: example.com/api/*
+  if (val.indexOf("/") >= 0 && val.indexOf("://") < 0) {
+    return val.toLowerCase();
+  }
+
+  // Full URL (with or without scheme) → extract hostname (+ path if meaningful)
+  try {
+    var candidate = val.indexOf("://") < 0 ? "https://" + val : val;
+    var parsed = new URL(candidate);
+    var host = parsed.hostname.toLowerCase();
+    if (!host) return val.toLowerCase();
+    // Preserve path when user pasted more than just origin
+    if (parsed.pathname && parsed.pathname !== "/") {
+      return host + parsed.pathname + (parsed.search || "");
+    }
+    return host;
+  } catch (e) {
+    return val.toLowerCase();
+  }
+}
+
 function scopeAddDomain(domain) {
-  domain = domain.trim().toLowerCase();
-  if (!domain || scopeState.domains.indexOf(domain) >= 0) return;
+  domain = normalizeScopeInput(domain);
+  if (!domain) return;
+  // Case-sensitive compare for /regex/, lowercased for the rest
+  var exists = scopeState.domains.some(function(d) {
+    return d === domain || d.toLowerCase() === domain.toLowerCase();
+  });
+  if (exists) return;
   scopeState.domains.push(domain);
   scopeSave();
   renderScopeList();
@@ -241,6 +400,11 @@ function renderScopeList() {
     row.className = "scope-row";
     var icon = document.createElement("span");
     icon.className = "scope-dot";
+    // Visual hint for pattern type
+    if (domain.charAt(0) === "/") icon.title = "Regex pattern";
+    else if (domain.indexOf("*") >= 0) icon.title = "Wildcard pattern";
+    else if (domain.indexOf("/") >= 0) icon.title = "Path pattern";
+    else icon.title = "Domain (includes subdomains)";
     var lbl  = document.createElement("span");
     lbl.className   = "scope-domain-label";
     lbl.textContent = domain;
@@ -256,7 +420,14 @@ function renderScopeList() {
 function updateScopeUI() {
   var toggle = document.getElementById("scope-toggle");
   var badge  = document.getElementById("scope-badge");
-  if (toggle) toggle.classList.toggle("active", scopeState.enabled);
+  var modeBtn = document.getElementById("scope-mode-toggle");
+  if (toggle) {
+    toggle.classList.toggle("active", scopeState.enabled);
+    toggle.textContent = scopeState.enabled ? "SCOPE ON" : "SCOPE OFF";
+  }
+  if (modeBtn) {
+    modeBtn.textContent = scopeState.mode === "dim" ? "MODE: DIM" : "MODE: HIDE";
+  }
   if (badge) {
     badge.textContent = scopeState.enabled
       ? "SCOPE: " + scopeState.domains.length + " domain" + (scopeState.domains.length !== 1 ? "s" : "")
@@ -319,7 +490,7 @@ function exportHAR(requests) {
   var har = {
     log: {
       version: "1.2",
-      creator: { name: "PhantomProxy", version: "2.0.1" },
+      creator: { name: "PhantomProxy", version: "2.2.0" },
       entries: entries
     }
   };
@@ -348,33 +519,58 @@ function parseQS(url) {
 // ═══════════════════════════════════════════════════════
 
 function importHAR(file, onDone) {
+  if (!file) { onDone("No file", null); return; }
+  var maxBytes = 15 * 1024 * 1024;
+  if (file.size > maxBytes) {
+    onDone("HAR too large (max 15MB)", null);
+    return;
+  }
   var reader = new FileReader();
   reader.onload = function(e) {
     try {
-      var har     = JSON.parse(e.target.result);
-      var entries = (har.log && har.log.entries) || [];
+      var text = String(e.target.result || "");
+      if (text.length > maxBytes) {
+        onDone("HAR too large (max 15MB)", null);
+        return;
+      }
+      var har     = JSON.parse(text);
+      var entries = ((har.log && har.log.entries) || []).slice(0, 500);
       var imported = [];
+      var allowed = ["GET","POST","PUT","PATCH","DELETE","OPTIONS","HEAD"];
       entries.forEach(function(entry, i) {
         var r    = entry.request  || {};
         var res  = entry.response || {};
-        var reqH = {};
-        (r.headers || []).forEach(function(h) { reqH[h.name] = h.value; });
-        var resH = {};
-        (res.headers || []).forEach(function(h) { resH[h.name] = h.value; });
+        var reqH = Object.create(null);
+        (r.headers || []).forEach(function(h) {
+          if (!h || typeof h.name !== "string") return;
+          var n = h.name.replace(/[\r\n\0]/g, "").slice(0, 256);
+          if (!n || n === "__proto__" || n === "constructor") return;
+          reqH[n] = String(h.value == null ? "" : h.value).replace(/[\r\n\0]/g, " ").slice(0, 64 * 1024);
+        });
+        var resH = Object.create(null);
+        (res.headers || []).forEach(function(h) {
+          if (!h || typeof h.name !== "string") return;
+          var n = h.name.replace(/[\r\n\0]/g, "").slice(0, 256);
+          if (!n || n === "__proto__" || n === "constructor") return;
+          resH[n] = String(h.value == null ? "" : h.value).replace(/[\r\n\0]/g, " ").slice(0, 64 * 1024);
+        });
+        var method = String(r.method || "GET").toUpperCase();
+        if (allowed.indexOf(method) < 0) method = "GET";
         imported.push({
           id:              "har_" + Date.now() + "_" + i,
           requestId:       "har_" + i,
-          url:             r.url || "",
-          method:          r.method || "GET",
+          url:             String(r.url || "").slice(0, 8192),
+          method:          method,
           timestamp:       new Date(entry.startedDateTime || Date.now()).getTime(),
           tabId:           -1,
           type:            "xmlhttprequest",
           status:          "complete",
-          requestBody:     r.postData ? r.postData.text : null,
+          requestBody:     (r.postData && typeof r.postData.text === "string")
+                             ? r.postData.text.slice(0, 64 * 1024) : null,
           requestHeaders:  reqH,
           responseHeaders: resH,
-          statusCode:      res.status || 0,
-          duration:        entry.time || 0,
+          statusCode:      typeof res.status === "number" ? res.status : 0,
+          duration:        typeof entry.time === "number" ? entry.time : 0,
           _imported:       true
         });
       });
@@ -383,6 +579,7 @@ function importHAR(file, onDone) {
       onDone("Invalid HAR file: " + err.message, null);
     }
   };
+  reader.onerror = function() { onDone("Failed to read file", null); };
   reader.readAsText(file);
 }
 
@@ -480,10 +677,22 @@ function featuresInit(getRequests, addRequests, renderList, setStatus) {
   var scopeAdd   = document.getElementById("btn-scope-add");
   if (scopeAdd && scopeInput) {
     function addFromInput() {
-      var val = scopeInput.value.trim();
+      var raw = scopeInput.value.trim();
+      if (!raw) return;
+      // Validate explicit regex before adding so user gets feedback
+      if (raw.charAt(0) === "/") {
+        var ls = raw.lastIndexOf("/");
+        if (ls > 0) {
+          try {
+            new RegExp(raw.slice(1, ls), raw.slice(ls + 1) || "i");
+          } catch (err) {
+            setStatus("Invalid regex: " + err.message);
+            return;
+          }
+        }
+      }
+      var val = normalizeScopeInput(raw);
       if (!val) return;
-      // Auto-extract hostname if user pasted a full URL
-      try { val = new URL(val.indexOf("://") < 0 ? "https://" + val : val).hostname; } catch(e) {}
       scopeAddDomain(val);
       scopeInput.value = "";
       updateScopeUI();
@@ -597,11 +806,12 @@ function featuresInit(getRequests, addRequests, renderList, setStatus) {
 // PUBLIC API — exposed on window.PhantomFeatures
 // ═══════════════════════════════════════════════════════
 window.PhantomFeatures = {
-  init:           featuresInit,
-  getHighlights:  getHighlights,
+  init:               featuresInit,
+  getHighlights:      getHighlights,
   makeHighlightBadge: makeHighlightBadge,
-  scopeMatch:     scopeMatch,
-  scopeState:     scopeState,
-  exportHAR:      exportHAR,
-  parseCurl:      parseCurl
+  scopeMatch:         scopeMatch,
+  scopeMatchDomain:   scopeMatchDomain,
+  scopeState:         scopeState,
+  exportHAR:          exportHAR,
+  parseCurl:          parseCurl
 };

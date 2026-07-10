@@ -1,13 +1,20 @@
 # ⬡ PhantomProxy
 
-> A cyberpunk-themed HTTP traffic inspector and request repeater — browser DevTools extension for Microsoft Edge and Chrome.
+> A cyberpunk-themed HTTP traffic inspector, repeater, intruder, and intercept tool — browser DevTools extension for Microsoft Edge and Chrome.  
 > Built for developers, security researchers, and bug bounty hunters.
+
+**Current version: [v2.3.0](./RELEASE.md)**
+
+| Doc | Description |
+|-----|-------------|
+| **[USAGE.md](./USAGE.md)** | Full usage guide for every feature |
+| **[RELEASE.md](./RELEASE.md)** | v2.3.0 release notes (GitHub Releases body) |
 
 ---
 
 ## What is PhantomProxy?
 
-PhantomProxy is a lightweight in-browser security testing tool inspired by Burp Suite's proxy and repeater workflow. It captures all HTTP/HTTPS traffic from your browser tab in real time, lets you inspect every request and response in detail, replay and modify requests, decode tokens, manage your test scope, and bookmark interesting findings — all without setting up a system proxy, installing Java, or leaving your browser.
+PhantomProxy is a lightweight in-browser security testing tool inspired by Burp Suite's proxy, repeater, and intruder workflow. It captures HTTP/HTTPS traffic in real time, supports live request intercept (forward/drop), multi-position fuzzing, scope control, compare, cookie jar, and more — without a system proxy, Java, or leaving the browser.
 
 ---
 
@@ -28,7 +35,19 @@ Click the PhantomProxy icon in your toolbar → click **◈ EXECUTE** to open Ph
 
 ---
 
-## Features
+## Features (v2.3.0)
+
+| Area | Capabilities |
+|------|----------------|
+| **Scope** | Domains, wildcards, path patterns, regex, DIM/HIDE |
+| **Intercept** | Hold/edit/forward/drop; debugger + page-hook; POST-safe forward |
+| **History** | Live capture, filters, bookmarks, notes, HAR, flags |
+| **Repeater** | Multi-session, cookies, cURL import, send to Intruder |
+| **Intruder** | § positions, sniper/pitchfork/cluster, wordlists, grep |
+| **Tools** | Sitemap, search, compare, match/replace, params, cookies, issues, WS, JWT, project |
+| **Decoder** | Base64/URL/HTML/Hex/JSON/JWT/SHA-256 |
+
+> Detailed steps for each feature: **[USAGE.md](./USAGE.md)**
 
 ### ◎ Scope Tab
 Define exactly which targets you care about before you start testing.
