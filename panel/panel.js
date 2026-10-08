@@ -672,6 +672,29 @@ document.getElementById("btn-copy-curl").addEventListener("click", function() {
     .then(function() { setStatus("cURL copied ✓"); });
 });
 
+function publishCsrf(plan) {
+  if (!plan || plan.kind === "blocked" || !plan.html) {
+    setStatus(plan && plan.summary ? plan.summary : "No CSRF PoC");
+    return;
+  }
+  navigator.clipboard.writeText(plan.html).then(function() {
+    setStatus("Copied. " + plan.summary);
+  }, function() {
+    setStatus("Clipboard failed. " + plan.summary);
+  });
+}
+
+document.getElementById("btn-csrf-poc").addEventListener("click", function() {
+  var req = allRequests.find(function(r) { return r.id === selectedRequestId; });
+  if (!req || !window.PhantomCsrf) return;
+  publishCsrf(PhantomCsrf.forCapture({
+    method: req.method,
+    url: req.url,
+    requestHeaders: req.requestHeaders || {},
+    requestBody: req.requestBody || ""
+  }));
+});
+
 function switchTab(name) {
   document.querySelectorAll(".tab-btn").forEach(function(b) { b.classList.remove("active"); });
   document.querySelectorAll(".tab-pane").forEach(function(p) { p.classList.add("hidden"); });
@@ -1030,6 +1053,25 @@ function onCookiesResult(msg) {
 // ─── Send Request ─────────────────────────────────────
 document.getElementById("btn-send-req").addEventListener("click", doSend);
 
+function buildOutbound(session) {
+  var h = Object.assign({}, session.headers);
+  var activeEtab = document.querySelector(".rep-etab.active");
+  if (activeEtab && activeEtab.dataset.etab === "rep-body-editor" && session.body) {
+    h["Content-Type"] = document.getElementById("body-content-type").value;
+  }
+  var cookieHdr = cookiesToHeader(session.cookies);
+  Object.keys(h).forEach(function(k) {
+    if (k.toLowerCase() === "cookie") delete h[k];
+  });
+  if (cookieHdr) h["Cookie"] = cookieHdr;
+  return {
+    method: session.method,
+    url: session.url,
+    requestHeaders: h,
+    requestBody: session.body || null
+  };
+}
+
 function doSend() {
   var btn = document.getElementById("btn-send-req");
   btn.disabled = true;
@@ -1038,27 +1080,15 @@ function doSend() {
   var s = repeaterSessions.find(function(x) { return x.id === activeSessionId; });
   if (!s) { btn.disabled=false; btn.textContent="▶ SEND"; return; }
 
-  var h = Object.assign({}, s.headers);
-  var activeEtab = document.querySelector(".rep-etab.active");
-  if (activeEtab && activeEtab.dataset.etab === "rep-body-editor" && s.body) {
-    h["Content-Type"] = document.getElementById("body-content-type").value;
-  }
-  // Ensure Cookie header reflects cookies tab
-  var cookieHdr = cookiesToHeader(s.cookies);
-  Object.keys(h).forEach(function(k) {
-    if (k.toLowerCase() === "cookie") delete h[k];
-  });
-  if (cookieHdr) h["Cookie"] = cookieHdr;
-
+  var built = buildOutbound(s);
   var outbound = {
     id: activeSessionId,
-    method: s.method,
-    url: s.url,
-    requestHeaders: h,
-    requestBody: s.body || null,
+    method: built.method,
+    url: built.url,
+    requestHeaders: built.requestHeaders,
+    requestBody: built.requestBody,
     cookies: s.cookies || []
   };
-  // Match & replace rules (Tools tab) — applied before network send
   if (window.PhantomAdvanced && PhantomAdvanced.applyMatchReplace) {
     outbound = PhantomAdvanced.applyMatchReplace(outbound);
   }
@@ -1077,6 +1107,13 @@ function doSend() {
   btn.disabled=false; btn.textContent="▶ SEND";
   setStatus("Sending " + outbound.method + " " + outbound.url + "…");
 }
+
+document.getElementById("btn-rep-csrf").addEventListener("click", function() {
+  saveSession();
+  var s = repeaterSessions.find(function(x) { return x.id === activeSessionId; });
+  if (!s || !window.PhantomCsrf) return;
+  publishCsrf(PhantomCsrf.forCapture(buildOutbound(s)));
+});
 
 function onRepeaterResponse(sid, result) {
   var s = repeaterSessions.find(function(x) { return x.id === sid; });

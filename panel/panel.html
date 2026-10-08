@@ -178,6 +178,7 @@
               <div id="detail-actions">
                 <button class="action-btn" id="btn-send-repeater">⟳ SEND TO REPEATER</button>
                 <button class="action-btn secondary" id="btn-copy-curl">⎘ COPY AS CURL</button>
+                <button class="action-btn secondary" id="btn-csrf-poc">CSRF PoC</button>
                 <button class="action-btn secondary" id="btn-send-fuzzer" title="Send to Intruder">⚡ FUZZ</button>
                 <button class="action-btn secondary" id="btn-cmp-a" title="Set as Compare A">CMP A</button>
                 <button class="action-btn secondary" id="btn-cmp-b" title="Set as Compare B">CMP B</button>
@@ -271,6 +272,7 @@
                 <input type="text" id="rep-url" placeholder="https://target.com/api/endpoint" spellcheck="false" />
                 <button id="btn-send-req" class="send-btn">▶ SEND</button>
                 <button id="btn-rep-to-fuzz" class="ctrl-btn" title="Send this request to Intruder">⚡ FUZZ</button>
+                <button id="btn-rep-csrf" class="ctrl-btn" title="Copy a cross-site form proof">CSRF PoC</button>
               </div>
             </div>
 
@@ -961,6 +963,7 @@
   </div>
 
   <script src="security.js"></script>
+  <script src="csrf.js"></script>
   <script src="features.js"></script>
   <script src="advanced.js"></script>
   <script src="panel.js"></script>
