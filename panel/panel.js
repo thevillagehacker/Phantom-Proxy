@@ -1216,7 +1216,7 @@ if (_wb) _wb.addEventListener("click", function() {
   wrapOn = !wrapOn;
   if (wrapOn) {
     be.classList.remove("wrap-off"); be.classList.add("wrap-on");
-    _wb.style.color = "var(--cyan)"; _wb.style.borderColor = "var(--cyan-dim)";
+    _wb.style.color = "var(--accent)"; _wb.style.borderColor = "var(--accent-dim)";
   } else {
     be.classList.remove("wrap-on"); be.classList.add("wrap-off");
     _wb.style.color = ""; _wb.style.borderColor = "";
@@ -1403,7 +1403,7 @@ function statusClass(req) {
 }
 
 function methodColor(m) {
-  return {GET:"var(--green)",POST:"var(--cyan)",PUT:"var(--amber)",DELETE:"var(--red)",
+  return {GET:"var(--green)",POST:"var(--method-post)",PUT:"var(--amber)",DELETE:"var(--red)",
     PATCH:"var(--purple)",OPTIONS:"var(--text-secondary)",HEAD:"var(--blue)"}[m]||"var(--text-secondary)";
 }
 
@@ -1573,7 +1573,7 @@ function showBookmarkMenu(reqId, x, y) {
     "transition:background 0.1s,color 0.1s"
   ].join(";");
   clearBtn.addEventListener("mouseenter", function() {
-    clearBtn.style.background = "rgba(255,56,96,0.1)";
+    clearBtn.style.background = "color-mix(in srgb, var(--red) 10%, transparent)";
     clearBtn.style.color = "var(--red)";
   });
   clearBtn.addEventListener("mouseleave", function() {
